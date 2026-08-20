@@ -102,6 +102,15 @@ def get_ws_router(
                     logger.info(f"🖥️  {user_id} começou a compartilhar em {room_id}")
 
                 # -------------------------------------------------- #
+                # PING (latência para o indicador de conexão)          #
+                # -------------------------------------------------- #
+                elif msg_type == SignalType.PING:
+                    await conn_manager.send(user_id, {
+                        "type":    SignalType.PONG,
+                        "payload": data.get("payload"),
+                    })
+
+                # -------------------------------------------------- #
                 # STOP SHARING                                         #
                 # -------------------------------------------------- #
                 elif msg_type == SignalType.STOP:

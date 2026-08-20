@@ -16,6 +16,8 @@ class SignalType(str, Enum):
     USER_LEFT  = "user-left"
     USER_SHARE = "user-sharing"
     USER_STOP  = "user-stopped-sharing"
+    PING       = "ping"
+    PONG       = "pong"
     ERROR      = "error"
 
 

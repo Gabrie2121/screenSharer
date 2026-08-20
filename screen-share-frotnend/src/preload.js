@@ -8,4 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Captura de tela
   getSources: () => ipcRenderer.invoke('get-sources'),
+
+  // Log básico do app (grava em disco via processo principal)
+  log: (level, message) => ipcRenderer.send('renderer-log', level, message),
 })

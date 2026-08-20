@@ -31,9 +31,17 @@ const state = {
   // Quem estou assistindo
   watching: new Set(),
 
-  // Minha stream local (quando compartilho)
+  // Minha stream local (quando compartilho) — nunca é exibida na tela,
+  // só é usada para enviar aos outros participantes.
   localStream: null,
   sharing: false,
+
+  // Stream em foco na tela (as demais ficam minimizadas embaixo)
+  focusedId: null,
+
+  // Medição de latência (ping)
+  pingInterval: null,
+  pingWaiting: false,
 }
 
 // ──────────────────────────────────────────────
@@ -50,6 +58,13 @@ const ICE_CONFIG = {
 // HELPERS UI
 // ──────────────────────────────────────────────
 const $ = (id) => document.getElementById(id)
+
+// Log básico — imprime no console e grava no arquivo de log do app
+// (via processo principal, ver src/main.js).
+function appLog(level, message) {
+  console.log(`[${level}] ${message}`)
+  window.electronAPI?.log(level, message)
+}
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'))
@@ -121,6 +136,7 @@ function enterRoom(name, server, roomId) {
 
   $('display-room-id').textContent = roomId
   showScreen('room')
+  appLog('INFO', `Entrando na sala ${roomId} como "${name}" (servidor: ${server})`)
   connectWebSocket()
 }
 
@@ -134,17 +150,23 @@ function connectWebSocket() {
   state.ws.onopen = () => {
     sendWS({ type: 'join-room', username: state.myName })
     toast('Conectado à sala!')
+    startPing()
   }
 
   state.ws.onmessage = (event) => handleMessage(JSON.parse(event.data))
 
-  state.ws.onerror = () => toast('Erro de conexão com o servidor.')
+  state.ws.onerror = () => {
+    appLog('ERROR', `Erro de conexão WebSocket com ${url}`)
+    toast('Erro de conexão com o servidor.')
+  }
 
   state.ws.onclose = () => {
+    appLog('WARN', 'Desconectado do servidor.')
     toast('Desconectado do servidor.')
     // Limpa peers
     Object.values(state.peers).forEach(pc => pc.close())
     state.peers = {}
+    stopPing()
   }
 }
 
@@ -152,6 +174,49 @@ function sendWS(obj) {
   if (state.ws?.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify(obj))
   }
+}
+
+// ──────────────────────────────────────────────
+// PING — latência com o servidor (barrinhas + ms)
+// ──────────────────────────────────────────────
+function startPing() {
+  stopPing()
+  const tick = () => {
+    if (state.ws?.readyState !== WebSocket.OPEN) return
+    state.pingWaiting = true
+    sendWS({ type: 'ping', payload: { t: Date.now() } })
+  }
+  tick()
+  state.pingInterval = setInterval(tick, 3000)
+}
+
+function stopPing() {
+  clearInterval(state.pingInterval)
+  state.pingInterval = null
+  updatePingUI(null)
+}
+
+function handlePong(payload) {
+  state.pingWaiting = false
+  const sentAt = payload?.t
+  if (!sentAt) return
+  updatePingUI(Date.now() - sentAt)
+}
+
+function updatePingUI(ms) {
+  const box = $('ping-box')
+  const msEl = $('ping-ms')
+  if (ms == null) {
+    box.dataset.level = '0'
+    msEl.textContent = '-- ms'
+    return
+  }
+  msEl.textContent = `${ms} ms`
+  let level = 4
+  if (ms > 400) level = 1
+  else if (ms > 200) level = 2
+  else if (ms > 100) level = 3
+  box.dataset.level = String(level)
 }
 
 // ──────────────────────────────────────────────
@@ -218,6 +283,11 @@ async function handleMessage(msg) {
 
     case 'ice-candidate':
       await handleIceCandidate(msg.from, msg.payload)
+      break
+
+    // Resposta do ping — mede a latência com o servidor
+    case 'pong':
+      handlePong(msg.payload)
       break
   }
 }
@@ -451,17 +521,19 @@ async function captureSource(sourceId) {
   $('modal-source').classList.add('hidden')
 
   try {
-    // Tenta primeiro com getDisplayMedia (mais simples)
+    // Tenta primeiro com getDisplayMedia, pedindo áudio do sistema (tela toda).
+    // Obs: não há API do navegador/Electron para excluir o áudio de um app
+    // específico (ex.: Discord) — só é possível incluir ou não o áudio inteiro.
     let stream
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
-        audio: false,
+        audio: true,
+        systemAudio: 'include',
       })
     } catch {
-      // Fallback: usa getUserMedia com sourceId específico
+      // Fallback: usa getUserMedia com sourceId específico (vídeo + áudio do desktop)
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
         video: {
           mandatory: {
             chromeMediaSource: 'desktop',
@@ -472,6 +544,11 @@ async function captureSource(sourceId) {
             maxHeight: 1080,
           },
         },
+        audio: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+          },
+        },
       })
     }
 
@@ -480,7 +557,8 @@ async function captureSource(sourceId) {
       return
     }
 
-    console.log('Stream capturada:', stream.getVideoTracks()[0].label)
+    console.log('Stream capturada:', stream.getVideoTracks()[0].label,
+      '| áudio:', stream.getAudioTracks().length > 0)
 
     state.localStream = stream
     state.sharing = true
@@ -492,40 +570,19 @@ async function captureSource(sourceId) {
 
     stream.getVideoTracks()[0].onended = () => stopSharing()
 
-    // Mostra preview local para confirmar que capturou
-    showLocalPreview(stream)
-
+    // A própria tela compartilhada NÃO é exibida para quem está
+    // compartilhando — só os outros participantes a veem.
     renderParticipants()
-    toast('Você está compartilhando a tela!')
+    appLog('INFO', `Compartilhamento iniciado (áudio: ${stream.getAudioTracks().length > 0})`)
+    toast(stream.getAudioTracks().length
+      ? 'Você está compartilhando a tela com áudio!'
+      : 'Você está compartilhando a tela (sem áudio).')
 
   } catch (err) {
     console.error('Erro ao capturar:', err)
+    appLog('ERROR', `Falha ao capturar tela: ${err.message}`)
     toast(`Erro: ${err.message}`)
   }
-}
-
-// Preview local — você mesmo vê o que está compartilhando
-function showLocalPreview(stream) {
-  const grid = $('streams-grid')
-  $('stage-empty').classList.add('hidden')
-  grid.classList.remove('hidden')
-
-  let card = grid.querySelector('[data-stream="local"]')
-  if (!card) {
-    card = document.createElement('div')
-    card.className = 'stream-card'
-    card.dataset.stream = 'local'
-    card.innerHTML = `
-      <div class="stream-header">
-        <span class="stream-name">Você (preview)</span>
-      </div>
-      <video class="stream-video" autoplay playsinline muted></video>
-    `
-    grid.appendChild(card)
-  }
-
-  card.querySelector('video').srcObject = stream
-  updateGridLayout()
 }
 
 // ──────────────────────────────────────────────
@@ -547,13 +604,46 @@ function upsertStreamCard(uid, stream) {
       <div class="stream-header">
         <span class="stream-name">${username}</span>
       </div>
-      <video class="stream-video" autoplay playsinline></video>
+      <div class="stream-video-wrap">
+        <video class="stream-video" autoplay playsinline></video>
+        <div class="stream-loading">
+          <div class="spinner"></div>
+          <span>Carregando tela…</span>
+        </div>
+      </div>
+      <div class="stream-controls">
+        <span class="vol-icon">🔊</span>
+        <input type="range" class="vol-slider" min="0" max="100" value="100" />
+        <span class="vol-value">100%</span>
+      </div>
     `
+
+    // Clicar na stream coloca ela em foco (as demais minimizam embaixo)
+    card.addEventListener('click', () => toggleFocus(uid))
+
+    // Controle de volume — 0% a 100% (não interfere no foco)
+    const video = card.querySelector('video')
+    const slider = card.querySelector('.vol-slider')
+    const volValue = card.querySelector('.vol-value')
+    slider.addEventListener('click', (e) => e.stopPropagation())
+    slider.addEventListener('input', () => {
+      const v = Number(slider.value)
+      video.volume = v / 100
+      volValue.textContent = `${v}%`
+    })
+
     grid.appendChild(card)
   }
 
   const video = card.querySelector('video')
+  const loading = card.querySelector('.stream-loading')
+
+  // Tela de carregando enquanto o vídeo da pessoa ainda não chegou
+  loading?.classList.remove('hidden')
+  video.onloadeddata = () => loading?.classList.add('hidden')
+
   video.srcObject = stream
+  video.volume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
 
   updateGridLayout()
 }
@@ -561,21 +651,47 @@ function upsertStreamCard(uid, stream) {
 function removeStreamCard(uid) {
   const card = $('streams-grid').querySelector(`[data-stream="${uid}"]`)
   card?.remove()
+  if (state.focusedId === uid) state.focusedId = null
+  updateGridLayout()
+}
+
+// ──────────────────────────────────────────────
+// FOCO — uma stream em destaque, as demais minimizadas
+// ──────────────────────────────────────────────
+function toggleFocus(uid) {
+  state.focusedId = state.focusedId === uid ? null : uid
   updateGridLayout()
 }
 
 function updateGridLayout() {
   const grid = $('streams-grid')
-  const count = grid.querySelectorAll('.stream-card').length
-  grid.className = 'streams-grid'
+  const cards = Array.from(grid.querySelectorAll('.stream-card'))
 
-  if (count === 0) {
-    grid.classList.add('hidden')
+  if (cards.length === 0) {
+    grid.className = 'streams-grid hidden'
     $('stage-empty').classList.remove('hidden')
     return
   }
 
-  grid.classList.add(`count-${Math.min(count, 4)}`)
+  $('stage-empty').classList.add('hidden')
+  grid.classList.remove('hidden')
+
+  // Se a stream em foco não existe mais, limpa o foco
+  if (state.focusedId && !cards.some(c => c.dataset.stream === state.focusedId)) {
+    state.focusedId = null
+  }
+
+  if (state.focusedId) {
+    grid.className = 'streams-grid has-focus'
+    cards.forEach(c => {
+      const isFocused = c.dataset.stream === state.focusedId
+      c.classList.toggle('focused', isFocused)
+      c.classList.toggle('minimized', !isFocused)
+    })
+  } else {
+    grid.className = `streams-grid count-${Math.min(cards.length, 4)}`
+    cards.forEach(c => c.classList.remove('focused', 'minimized'))
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -586,6 +702,7 @@ $('btn-copy-id').onclick = () => {
   toast('Código copiado!')
 }
 function stopSharing() {
+  if (!state.sharing) return
   state.localStream?.getTracks().forEach(t => t.stop())
   state.localStream = null
   state.sharing = false
@@ -597,10 +714,8 @@ function stopSharing() {
 
   Object.keys(state.peers).forEach(uid => closePeer(uid))
 
-  // Remove preview local
-  removeStreamCard('local')
-
   renderParticipants()
+  appLog('INFO', 'Compartilhamento encerrado')
   toast('Você parou de compartilhar.')
 }
 // ──────────────────────────────────────────────
@@ -609,10 +724,12 @@ function stopSharing() {
 $('btn-leave').onclick = () => {
   stopSharing()
   state.ws?.close()
+  stopPing()
   state.peers = {}
   state.users = {}
   state.watching.clear()
   state.remoteStreams = {}
+  state.focusedId = null
   $('streams-grid').innerHTML = ''
   $('stage-empty').classList.remove('hidden')
   $('streams-grid').classList.add('hidden')

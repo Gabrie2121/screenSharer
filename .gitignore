@@ -9,3 +9,5 @@ dist
 dist/
 /__pycache__
 context.MD
+logs/
+*.log

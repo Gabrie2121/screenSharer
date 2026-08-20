@@ -103,10 +103,14 @@ function createWindow() {
   // Deixa o Electron mostrar o seletor nativo de tela.
   // `audio: 'loopback'` captura o áudio de saída do Windows inteiro (tela toda),
   // que é exatamente o que o getDisplayMedia({ audio: true }) do renderer pede.
+  // Só tenta o loopback quando o renderer realmente pediu áudio
+  // (`request.audioRequested`) — o renderer cai pra um retry só de vídeo
+  // quando a captura de áudio falha (ver captureSource em app.js), e se
+  // aqui a gente forçasse 'loopback' sempre, esse retry falharia igual.
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
       // Pega a primeira tela disponível automaticamente
-      callback({ video: sources[0], audio: 'loopback' })
+      callback({ video: sources[0], audio: request.audioRequested ? 'loopback' : undefined })
     })
   })
 

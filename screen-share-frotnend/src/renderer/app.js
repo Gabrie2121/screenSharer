@@ -724,31 +724,42 @@ async function captureSource(sourceId) {
     // Obs: não há API do navegador/Electron para excluir o áudio de um app
     // específico (ex.: Discord) — só é possível incluir ou não o áudio inteiro.
     let stream
+    let audioIssue = null
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: true,
         systemAudio: 'include',
       })
-    } catch {
-      // Fallback: usa getUserMedia com sourceId específico (vídeo + áudio do desktop)
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          mandatory: {
-            chromeMediaSource: 'desktop',
-            chromeMediaSourceId: sourceId,
-            minWidth: 1280,
-            maxWidth: 1920,
-            minHeight: 720,
-            maxHeight: 1080,
+    } catch (err) {
+      // "Could not start audio source" é a captura de loopback do Windows
+      // falhando (dispositivo de saída em modo exclusivo, desconectado,
+      // mudo, etc.) — isso não deveria impedir compartilhar o vídeo, mas o
+      // fallback abaixo também pedia áudio do desktop e batia no mesmo
+      // problema, derrubando o compartilhamento inteiro por causa só do áudio.
+      const isAudioIssue = err?.name === 'NotReadableError' && /audio/i.test(err.message || '')
+      if (!isAudioIssue) throw err
+
+      audioIssue = err
+      appLog('WARN', `Captura de áudio do sistema falhou (${err.message}) — tentando só vídeo`)
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      } catch {
+        // Último recurso: getUserMedia com sourceId específico, só vídeo
+        // (pular áudio aqui também, já que acabamos de ver que ele falha)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sourceId,
+              minWidth: 1280,
+              maxWidth: 1920,
+              minHeight: 720,
+              maxHeight: 1080,
+            },
           },
-        },
-        audio: {
-          mandatory: {
-            chromeMediaSource: 'desktop',
-          },
-        },
-      })
+        })
+      }
     }
 
     if (!stream || stream.getVideoTracks().length === 0) {
@@ -773,9 +784,13 @@ async function captureSource(sourceId) {
     // compartilhando — só os outros participantes a veem.
     renderParticipants()
     appLog('INFO', `Compartilhamento iniciado (áudio: ${stream.getAudioTracks().length > 0})`)
-    toast(stream.getAudioTracks().length
-      ? 'Você está compartilhando a tela com áudio!'
-      : 'Você está compartilhando a tela (sem áudio).')
+    if (audioIssue) {
+      toast('Compartilhando a tela sem áudio — não foi possível capturar o áudio do sistema.')
+    } else {
+      toast(stream.getAudioTracks().length
+        ? 'Você está compartilhando a tela com áudio!'
+        : 'Você está compartilhando a tela (sem áudio).')
+    }
 
   } catch (err) {
     console.error('Erro ao capturar:', err)

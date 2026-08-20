@@ -804,7 +804,7 @@ function upsertStreamCard(uid, stream) {
         <span class="stream-name">${username}</span>
       </div>
       <div class="stream-video-wrap">
-        <video class="stream-video" autoplay playsinline></video>
+        <video class="stream-video" autoplay muted playsinline></video>
         <div class="stream-loading">
           <div class="spinner"></div>
           <span>Carregando tela…</span>
@@ -828,11 +828,9 @@ function upsertStreamCard(uid, stream) {
     slider.addEventListener('input', () => {
       const v = Number(slider.value)
       video.volume = v / 100
-      // Se o autoplay mudo inicial não conseguiu desmutar sozinho (ver
-      // comentário mais abaixo), essa interação do usuário é um gesto
-      // válido pro navegador permitir desmutar aqui.
       video.muted = v === 0
       volValue.textContent = `${v}%`
+      if (video.paused) video.play().catch(() => {})
     })
 
     grid.appendChild(card)
@@ -850,24 +848,19 @@ function upsertStreamCard(uid, stream) {
   // essa checagem, chamávamos video.play() duas vezes quase juntas no
   // mesmo elemento, o que pode abortar uma chamada com a outra.
   if (video.srcObject !== stream) {
-    // Corrige o bug da "tela preta": desde que passamos a compartilhar áudio
-    // junto do vídeo, o Chromium/Electron bloqueia o autoplay de um <video>
-    // não mutado com faixa de áudio sem interação do usuário — o vídeo nunca
-    // chega a tocar e fica preto. Começamos mutado (autoplay sempre permitido
-    // nesse caso), tocamos, e só então desmutamos no volume escolhido.
-    const targetVolume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
-    video.muted = true
+    // O <video> começa muted (atributo HTML), o que permite autoplay sem
+    // interação do usuário. O áudio só é liberado quando a pessoa mexe no
+    // slider de volume — um gesto válido pro navegador permitir unmute.
     video.srcObject = stream
-    video.volume = targetVolume
-    video.play()
-      .then(() => { video.muted = false })
-      .catch((err) => {
-        console.warn(`[AUTOPLAY] Bloqueado para ${uid}:`, err)
-        appLog('WARN', `Autoplay bloqueado para stream de ${uid}: ${err.message}`)
-        // Fica mudo até a pessoa mexer no slider de volume (ver o listener
-        // 'input' acima) — dali em diante já é um gesto do usuário, que o
-        // navegador aceita como permissão pra desmutar.
-      })
+    video.volume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
+    video.play().catch((err) => {
+      // AbortError: play() interrompido porque srcObject mudou antes do
+      // promise resolver (ontrack dispara para vídeo e áudio em sequência).
+      // Não é bloqueio real — o play() mais recente vai rodar sozinho.
+      if (err.name === 'AbortError') return
+      console.warn(`[AUTOPLAY] Bloqueado para ${uid}:`, err)
+      appLog('WARN', `Autoplay bloqueado para stream de ${uid}: ${err.message}`)
+    })
   }
 
   updateGridLayout()

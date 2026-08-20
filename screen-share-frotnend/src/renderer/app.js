@@ -11,6 +11,8 @@
 // ESTADO
 // ──────────────────────────────────────────────
 const SELF_PREVIEW_KEY = 'sharesync:show-self-preview'
+const DEFAULT_WATCH_QUALITY_KEY = 'sharesync:default-watch-quality'
+const SHARE_AUDIO_KEY = 'sharesync:share-audio'
 
 const state = {
   myId:      null,
@@ -59,6 +61,11 @@ const state = {
   // Preferência de mostrar a autovisualização — persiste em sessionStorage
   // (SELF_PREVIEW_KEY) e vira o padrão pras próximas vezes que compartilhar.
   showSelfPreview: sessionStorage.getItem(SELF_PREVIEW_KEY) === 'true',
+
+  // Qualidade padrão ao começar a assistir alguém (Configurações → Live) —
+  // 'auto' ou uma altura em px ('360'/'480'/'720'/'1080'). Dá pra mudar na
+  // hora por live, no seletor de cada card (ver upsertStreamCard).
+  defaultWatchQuality: sessionStorage.getItem(DEFAULT_WATCH_QUALITY_KEY) || 'auto',
 
   // Stream em foco na tela (as demais ficam minimizadas embaixo)
   focusedId: null,
@@ -762,9 +769,17 @@ function removeUser(uid) {
 }
 
 // ──────────────────────────────────────────────
-// AUTOVISUALIZAÇÃO — opcional, canto inferior direito, sempre mudo.
-// Preferência salva em sessionStorage e usada como padrão dali pra frente.
+// CONFIGURAÇÕES — modal com opções por seção (por enquanto só "Live").
+// Botão fica meio a meio com o de compartilhar na sidebar.
 // ──────────────────────────────────────────────
+$('btn-settings').onclick = () => $('modal-settings').classList.remove('hidden')
+$('btn-close-settings').onclick = () => $('modal-settings').classList.add('hidden')
+$('modal-settings').onclick = (e) => {
+  if (e.target === $('modal-settings')) $('modal-settings').classList.add('hidden')
+}
+
+// Autovisualização — opcional, canto inferior direito, sempre mudo.
+// Preferência salva em sessionStorage e usada como padrão dali pra frente.
 const chkSelfPreview = $('chk-self-preview')
 chkSelfPreview.checked = state.showSelfPreview
 
@@ -772,6 +787,17 @@ chkSelfPreview.onchange = () => {
   state.showSelfPreview = chkSelfPreview.checked
   sessionStorage.setItem(SELF_PREVIEW_KEY, String(state.showSelfPreview))
   updateSelfPreview()
+}
+
+// Qualidade padrão ao assistir — aplicada de saída a cada nova live que
+// você começa a assistir; a pessoa ainda pode trocar na hora, por live, no
+// seletor do próprio card (ver upsertStreamCard).
+const selDefaultWatchQuality = $('default-watch-quality')
+selDefaultWatchQuality.value = state.defaultWatchQuality
+
+selDefaultWatchQuality.onchange = () => {
+  state.defaultWatchQuality = selDefaultWatchQuality.value
+  sessionStorage.setItem(DEFAULT_WATCH_QUALITY_KEY, state.defaultWatchQuality)
 }
 
 function updateSelfPreview() {
@@ -811,7 +837,13 @@ $('btn-toggle-share').onclick = async () => {
 // Escolhidas no modal de fonte, aplicadas como constraints da captura.
 const QUALITY_HEIGHTS = { 720: { width: 1280, height: 720 }, 1080: { width: 1920, height: 1080 } }
 let selectedSourceId = null
-let selectedQuality = { resolution: 1080, fps: 30 }
+let selectedQuality = {
+  resolution: 1080,
+  fps: 30,
+  // Vem por padrão com som; se a pessoa mudar no modal, fica salvo em
+  // sessionStorage e essa vira a escolha padrão dali pra frente.
+  audio: sessionStorage.getItem(SHARE_AUDIO_KEY) !== 'off',
+}
 
 async function startSharing() {
   // Pede ao main process a lista de fontes
@@ -854,19 +886,33 @@ function updateTransmitButton() {
   $('btn-start-transmit').disabled = !selectedSourceId
 }
 
-// Grupos de botões de qualidade (resolução / FPS) — só um ativo por grupo
-function setupQualityGroup(containerId, onChange) {
+// Grupos de botões de qualidade (resolução / FPS / áudio) — só um ativo
+// por grupo. `parse` converte o data-value do botão (número pra
+// resolução/fps, texto cru pro grupo de áudio).
+function setupQualityGroup(containerId, onChange, parse = Number) {
   const container = $(containerId)
   container.querySelectorAll('.quality-opt').forEach(btn => {
     btn.onclick = () => {
       container.querySelectorAll('.quality-opt').forEach(b => b.classList.remove('active'))
       btn.classList.add('active')
-      onChange(Number(btn.dataset.value))
+      onChange(parse(btn.dataset.value))
     }
   })
 }
 setupQualityGroup('quality-resolution', (v) => { selectedQuality.resolution = v })
 setupQualityGroup('quality-fps', (v) => { selectedQuality.fps = v })
+setupQualityGroup('quality-audio', (v) => {
+  selectedQuality.audio = v === 'on'
+  sessionStorage.setItem(SHARE_AUDIO_KEY, v)
+}, (v) => v)
+
+// Reflete a preferência salva no botão certo (o HTML vem com "Com som"
+// marcado por padrão; se a sessão já tiver "Sem som" salvo, troca aqui).
+if (!selectedQuality.audio) {
+  $('quality-audio').querySelectorAll('.quality-opt').forEach(b => {
+    b.classList.toggle('active', b.dataset.value === 'off')
+  })
+}
 
 function closeSourceModal() {
   $('modal-source').classList.add('hidden')
@@ -908,40 +954,49 @@ function buildMandatoryVideoConstraints(sourceId, { resolution, fps }) {
   }
 }
 
+// Fallback comum de captura só-vídeo — usado tanto quando a pessoa escolhe
+// "Sem som" no modal quanto quando a captura de áudio falha em runtime.
+async function captureVideoOnly(sourceId, quality) {
+  try {
+    return await navigator.mediaDevices.getDisplayMedia({ video: buildVideoConstraints(quality), audio: false })
+  } catch {
+    // Último recurso: getUserMedia com sourceId específico, só vídeo
+    return await navigator.mediaDevices.getUserMedia({
+      video: buildMandatoryVideoConstraints(sourceId, quality),
+    })
+  }
+}
+
 async function captureSource(sourceId, quality) {
   $('modal-source').classList.add('hidden')
 
   try {
-    // Tenta primeiro com getDisplayMedia, pedindo áudio do sistema (tela toda).
-    // Obs: não há API do navegador/Electron para excluir o áudio de um app
-    // específico (ex.: Discord) — só é possível incluir ou não o áudio inteiro.
     let stream
     let audioIssue = null
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: buildVideoConstraints(quality),
-        audio: true,
-        systemAudio: 'include',
-      })
-    } catch (err) {
-      // "Could not start audio source" é a captura de loopback do Windows
-      // falhando (dispositivo de saída em modo exclusivo, desconectado,
-      // mudo, etc.) — isso não deveria impedir compartilhar o vídeo, mas o
-      // fallback abaixo também pedia áudio do desktop e batia no mesmo
-      // problema, derrubando o compartilhamento inteiro por causa só do áudio.
-      const isAudioIssue = err?.name === 'NotReadableError' && /audio/i.test(err.message || '')
-      if (!isAudioIssue) throw err
 
-      audioIssue = err
-      appLog('WARN', `Captura de áudio do sistema falhou (${err.message}) — tentando só vídeo`)
+    if (!quality.audio) {
+      // Escolha explícita de "Sem som" no modal — nem tenta capturar áudio.
+      stream = await captureVideoOnly(sourceId, quality)
+    } else {
+      // Tenta primeiro com getDisplayMedia, pedindo áudio do sistema (tela toda).
+      // Obs: não há API do navegador/Electron para excluir o áudio de um app
+      // específico (ex.: Discord) — só é possível incluir ou não o áudio inteiro.
       try {
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: buildVideoConstraints(quality), audio: false })
-      } catch {
-        // Último recurso: getUserMedia com sourceId específico, só vídeo
-        // (pular áudio aqui também, já que acabamos de ver que ele falha)
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: buildMandatoryVideoConstraints(sourceId, quality),
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: buildVideoConstraints(quality),
+          audio: true,
+          systemAudio: 'include',
         })
+      } catch (err) {
+        // "Could not start audio source" é a captura de loopback do Windows
+        // falhando (dispositivo de saída em modo exclusivo, desconectado,
+        // mudo, etc.) — isso não deveria impedir compartilhar o vídeo.
+        const isAudioIssue = err?.name === 'NotReadableError' && /audio/i.test(err.message || '')
+        if (!isAudioIssue) throw err
+
+        audioIssue = err
+        appLog('WARN', `Captura de áudio do sistema falhou (${err.message}) — tentando só vídeo`)
+        stream = await captureVideoOnly(sourceId, quality)
       }
     }
 
@@ -1021,7 +1076,7 @@ function upsertStreamCard(uid, stream) {
         <input type="range" class="vol-slider" min="0" max="100" value="0" />
         <span class="vol-value">0%</span>
         <select class="quality-select" title="Qualidade da transmissão (economiza banda)">
-          <option value="auto" selected>Automática</option>
+          <option value="auto">Automática</option>
           <option value="1080">1080p</option>
           <option value="720">720p</option>
           <option value="480">480p</option>
@@ -1040,6 +1095,18 @@ function upsertStreamCard(uid, stream) {
     const volValue = card.querySelector('.vol-value')
     const volIcon = card.querySelector('.vol-icon')
     let lastVolume = 100 // pra restaurar ao clicar no ícone depois de mutar
+
+    // Transmissão sem áudio (a pessoa escolheu "Sem som" ao compartilhar,
+    // ou a captura de áudio falhou) — bloqueia o controle de volume dessa
+    // live específica, não tem o que ajustar.
+    if (stream.getAudioTracks().length === 0) {
+      slider.disabled = true
+      volIcon.disabled = true
+      volIcon.textContent = '🔇'
+      volIcon.title = 'Esta transmissão não tem áudio'
+      volIcon.classList.add('muted')
+      volValue.textContent = '—'
+    }
 
     function syncVolumeIcon() {
       const muted = video.muted || Number(slider.value) === 0
@@ -1085,14 +1152,20 @@ function upsertStreamCard(uid, stream) {
 
     // Qualidade — quem assiste escolhe pra economizar banda (ver
     // applyViewerQuality, do lado de quem compartilha). `uid` aqui é quem
-    // está compartilhando, então o pedido vai pra ele.
+    // está compartilhando, então o pedido vai pra ele. Começa na qualidade
+    // padrão definida em Configurações → Live (a pessoa ainda pode trocar
+    // na hora, só pra essa live, pelo próprio seletor).
     const qualitySelect = card.querySelector('.quality-select')
+    qualitySelect.value = state.defaultWatchQuality
     qualitySelect.addEventListener('click', (e) => e.stopPropagation())
     qualitySelect.addEventListener('change', () => {
       const height = qualitySelect.value === 'auto' ? null : Number(qualitySelect.value)
       appLog('INFO', `Pedindo qualidade ${height ? height + 'p' : 'automática'} de ${uid}`)
       sendWS({ type: 'set-quality', to: uid, payload: { height } })
     })
+    if (state.defaultWatchQuality !== 'auto') {
+      sendWS({ type: 'set-quality', to: uid, payload: { height: Number(state.defaultWatchQuality) } })
+    }
 
     // Indicador de resolução/bitrate REAIS recebidos — prova concreta de
     // que o seletor de qualidade está funcionando (a olho, no vídeo, a

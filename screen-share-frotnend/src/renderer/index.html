@@ -78,14 +78,15 @@
       <ul id="participants-list" class="participants-list"></ul>
 
       <div class="sidebar-footer">
-        <button class="btn-share" id="btn-toggle-share">
-          <span class="share-icon">⬡</span>
-          <span id="share-btn-text">Compartilhar tela</span>
-        </button>
-        <label class="self-preview-option">
-          <input type="checkbox" id="chk-self-preview" />
-          <span>Mostrar minha tela (canto inferior direito)</span>
-        </label>
+        <div class="share-row">
+          <button class="btn-share" id="btn-toggle-share">
+            <span class="share-icon">🖥️</span>
+            <span id="share-btn-text">Compartilhar tela</span>
+          </button>
+          <button class="btn-settings" id="btn-settings" title="Configurações">
+            <span class="settings-icon">⚙</span>
+          </button>
+        </div>
         <button class="btn-leave" id="btn-leave">Sair da sala</button>
       </div>
     </aside>
@@ -127,6 +128,13 @@
             <button type="button" class="quality-opt" data-value="60">60 FPS</button>
           </div>
         </div>
+        <div class="quality-group">
+          <span class="quality-label">Áudio</span>
+          <div class="quality-options" id="quality-audio">
+            <button type="button" class="quality-opt active" data-value="on">Com som</button>
+            <button type="button" class="quality-opt" data-value="off">Sem som</button>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
@@ -137,12 +145,53 @@
     </div>
   </div>
 
+  <!-- MODAL: configurações -->
+  <div id="modal-settings" class="modal-backdrop hidden">
+    <div class="modal modal-settings">
+      <div class="modal-header">
+        <h2>Configurações</h2>
+        <button class="icon-btn" id="btn-close-settings">✕</button>
+      </div>
+
+      <div class="settings-body">
+        <div class="settings-section">
+          <h3 class="settings-section-title">Live</h3>
+
+          <label class="settings-row">
+            <div class="settings-row-text">
+              <span class="settings-row-label">Mostrar minha tela</span>
+              <span class="settings-row-hint">Prévia muda no canto inferior direito enquanto você compartilha.</span>
+            </div>
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-self-preview" />
+              <span class="toggle-slider"></span>
+            </span>
+          </label>
+
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <span class="settings-row-label">Qualidade padrão ao assistir</span>
+              <span class="settings-row-hint">Aplicada ao começar a assistir alguém — dá pra mudar na hora, por live, no seletor do card.</span>
+            </div>
+            <select id="default-watch-quality" class="quality-select-inline">
+              <option value="auto">Automática</option>
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="480">480p</option>
+              <option value="360">360p</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
 
-  <!-- AUTOVISUALIZAÇÃO — sua própria tela, opcional (ver checkbox na
-       sidebar), canto inferior direito. Nunca transmite som (só uma
-       prévia local, sempre mudo) e não é enviada a ninguém — é o mesmo
+  <!-- AUTOVISUALIZAÇÃO — sua própria tela, opcional (ver Configurações →
+       Live), canto inferior direito. Nunca transmite som (só uma prévia
+       local, sempre mudo) e não é enviada a ninguém — é o mesmo
        state.localStream que já vai pros outros participantes. -->
   <div id="self-preview" class="self-preview hidden">
     <video id="self-preview-video" autoplay muted playsinline></video>

@@ -64,12 +64,16 @@ def get_ws_router(
                     logger.info(f"👤 {username} ({user_id}) entrou em {room_id}")
 
                 # -------------------------------------------------- #
-                # OFFER / ANSWER / ICE  (sinalização WebRTC)          #
+                # OFFER / ANSWER / ICE / SET_QUALITY (sinalização WebRTC) #
+                # SET_QUALITY: quem assiste pede uma resolução (ver #
+                # context.MD) — é só um relay ponto-a-ponto igual aos    #
+                # outros, quem aplica é o app de quem está compartilhando #
                 # -------------------------------------------------- #
                 elif msg_type in (
                     SignalType.OFFER,
                     SignalType.ANSWER,
-                    SignalType.ICE
+                    SignalType.ICE,
+                    SignalType.SET_QUALITY,
                 ):
                     to = data.get("to")
                     if not to:

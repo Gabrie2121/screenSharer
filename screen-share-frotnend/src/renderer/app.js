@@ -61,6 +61,11 @@ const state = {
 
   // Timeouts de "assistir" pendente — evita loading infinito (ver toggleWatch)
   watchTimeouts: {},
+
+  // Intervalos que leem getStats() pra mostrar resolução/bitrate reais
+  // recebidos em cada card (ver upsertStreamCard) — prova concreta de que
+  // o seletor de qualidade está realmente mudando o que chega pela rede.
+  statsIntervals: {},
 }
 
 // ──────────────────────────────────────────────
@@ -427,6 +432,11 @@ async function handleMessage(msg) {
       await handleIceCandidate(msg.from, msg.payload)
       break
 
+    // Quem está assistindo pediu outra resolução (economia de banda)
+    case 'set-quality':
+      await applyViewerQuality(msg.from, msg.payload?.height ?? null)
+      break
+
     // Resposta do ping — mede a latência com o servidor
     case 'pong':
       handlePong(msg.payload)
@@ -684,6 +694,44 @@ async function handleIceCandidate(fromId, payload) {
   }
 }
 
+// ──────────────────────────────────────────────
+// QUALIDADE POR ESPECTADOR — quem assiste escolhe 360p/480p/720p/1080p ou
+// automática pra economizar banda (ver seletor em upsertStreamCard). Como
+// cada par usuário↔usuário tem sua própria RTCPeerConnection
+// (state.sharePeers), dá pra ajustar o encoder por espectador sem afetar
+// quem está assistindo em qualidade automática/alta — não é simulcast, é
+// só o mesmo vídeo sendo reescalado/recomprimido nessa conexão específica.
+// ──────────────────────────────────────────────
+const QUALITY_BITRATE_KBPS = { 360: 600, 480: 1000, 720: 2500, 1080: 4000 }
+
+async function applyViewerQuality(viewerId, requestedHeight) {
+  const pc = state.sharePeers[viewerId]
+  if (!pc) return
+  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video')
+  if (!sender) return
+
+  const nativeHeight = state.localStream?.getVideoTracks()[0]?.getSettings()?.height
+
+  try {
+    const params = sender.getParameters()
+    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}]
+
+    if (!requestedHeight || !nativeHeight) {
+      // "Automática" — volta a mandar na resolução nativa capturada
+      delete params.encodings[0].scaleResolutionDownBy
+      delete params.encodings[0].maxBitrate
+    } else {
+      params.encodings[0].scaleResolutionDownBy = Math.max(1, nativeHeight / requestedHeight)
+      params.encodings[0].maxBitrate = (QUALITY_BITRATE_KBPS[requestedHeight] || 2000) * 1000
+    }
+
+    await sender.setParameters(params)
+    appLog('INFO', `Qualidade ajustada para ${viewerId}: ${requestedHeight ? requestedHeight + 'p' : 'automática'}`)
+  } catch (err) {
+    console.warn('[QUALITY] Falha ao ajustar parâmetros do encoder:', err)
+  }
+}
+
 function closeWatchPeer(uid) {
   state.watchPeers[uid]?.close()
   delete state.watchPeers[uid]
@@ -911,6 +959,7 @@ function upsertStreamCard(uid, stream) {
     card.innerHTML = `
       <div class="stream-header">
         <span class="stream-name">${username}</span>
+        <span class="stream-stats" title="Resolução e bitrate recebidos agora"></span>
       </div>
       <div class="stream-video-wrap">
         <video class="stream-video" autoplay muted playsinline></video>
@@ -923,6 +972,13 @@ function upsertStreamCard(uid, stream) {
         <button type="button" class="vol-icon muted" title="Ativar som">🔇</button>
         <input type="range" class="vol-slider" min="0" max="100" value="0" />
         <span class="vol-value">0%</span>
+        <select class="quality-select" title="Qualidade da transmissão (economiza banda)">
+          <option value="auto" selected>Automática</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+          <option value="360">360p</option>
+        </select>
       </div>
     `
 
@@ -979,6 +1035,46 @@ function upsertStreamCard(uid, stream) {
       if (video.paused) video.play().catch(() => {})
     })
 
+    // Qualidade — quem assiste escolhe pra economizar banda (ver
+    // applyViewerQuality, do lado de quem compartilha). `uid` aqui é quem
+    // está compartilhando, então o pedido vai pra ele.
+    const qualitySelect = card.querySelector('.quality-select')
+    qualitySelect.addEventListener('click', (e) => e.stopPropagation())
+    qualitySelect.addEventListener('change', () => {
+      const height = qualitySelect.value === 'auto' ? null : Number(qualitySelect.value)
+      appLog('INFO', `Pedindo qualidade ${height ? height + 'p' : 'automática'} de ${uid}`)
+      sendWS({ type: 'set-quality', to: uid, payload: { height } })
+    })
+
+    // Indicador de resolução/bitrate REAIS recebidos — prova concreta de
+    // que o seletor de qualidade está funcionando (a olho, no vídeo, a
+    // diferença nem sempre salta à vista: a caixa na tela continua do
+    // mesmo tamanho, e tela compartilhada comprime bem mesmo em 1080p
+    // quando tem pouco movimento).
+    const statsEl = card.querySelector('.stream-stats')
+    let lastBytes = 0
+    let lastStatsTime = performance.now()
+    state.statsIntervals[uid] = setInterval(async () => {
+      const wp = state.watchPeers[uid]
+      if (!wp || !statsEl) return
+      try {
+        const report = await wp.getStats()
+        report.forEach(r => {
+          if (r.type !== 'inbound-rtp' || r.kind !== 'video') return
+          const now = performance.now()
+          const dtSec = (now - lastStatsTime) / 1000
+          const kbps = dtSec > 0 && lastBytes
+            ? Math.max(0, Math.round(((r.bytesReceived - lastBytes) * 8) / dtSec / 1000))
+            : 0
+          lastBytes = r.bytesReceived
+          lastStatsTime = now
+          statsEl.textContent = r.frameWidth
+            ? `${r.frameWidth}×${r.frameHeight} · ${kbps} kbps`
+            : ''
+        })
+      } catch { /* pc pode já ter fechado entre o tick e a leitura */ }
+    }, 2000)
+
     grid.appendChild(card)
   }
 
@@ -1017,6 +1113,8 @@ function upsertStreamCard(uid, stream) {
 }
 
 function removeStreamCard(uid) {
+  clearInterval(state.statsIntervals[uid])
+  delete state.statsIntervals[uid]
   const card = $('streams-grid').querySelector(`[data-stream="${uid}"]`)
   card?.remove()
   if (state.focusedId === uid) state.focusedId = null
@@ -1104,6 +1202,8 @@ $('btn-leave').onclick = () => {
   state.connecting.clear()
   state.remoteStreams = {}
   state.focusedId = null
+  Object.values(state.statsIntervals).forEach(id => clearInterval(id))
+  state.statsIntervals = {}
   $('streams-grid').innerHTML = ''
   $('stage-empty').classList.remove('hidden')
   $('streams-grid').classList.add('hidden')

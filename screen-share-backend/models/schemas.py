@@ -4,21 +4,22 @@ from enum import Enum
 
 
 class SignalType(str, Enum):
-    OFFER      = "offer"
-    ANSWER     = "answer"
-    ICE        = "ice-candidate"
-    START      = "start-sharing"
-    STOP       = "stop-sharing"
-    JOIN       = "join-room"
-    LEAVE      = "leave-room"
-    ROOM_INFO  = "room-info"
-    USER_JOIN  = "user-joined"
-    USER_LEFT  = "user-left"
-    USER_SHARE = "user-sharing"
-    USER_STOP  = "user-stopped-sharing"
-    PING       = "ping"
-    PONG       = "pong"
-    ERROR      = "error"
+    OFFER       = "offer"
+    ANSWER      = "answer"
+    ICE         = "ice-candidate"
+    SET_QUALITY = "set-quality"
+    START       = "start-sharing"
+    STOP        = "stop-sharing"
+    JOIN        = "join-room"
+    LEAVE       = "leave-room"
+    ROOM_INFO   = "room-info"
+    USER_JOIN   = "user-joined"
+    USER_LEFT   = "user-left"
+    USER_SHARE  = "user-sharing"
+    USER_STOP   = "user-stopped-sharing"
+    PING        = "ping"
+    PONG        = "pong"
+    ERROR       = "error"
 
 
 class User(BaseModel):

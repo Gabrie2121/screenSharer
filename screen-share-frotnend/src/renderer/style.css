@@ -502,11 +502,33 @@ input[type="text"]::placeholder { color: var(--text3); }
   background: var(--green);
   box-shadow: 0 0 6px var(--green);
 }
+/* Resolução/bitrate reais recebidos (getStats, ver upsertStreamCard) —
+   prova ao vivo de que o seletor de qualidade está funcionando. */
+.stream-stats {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text3);
+  white-space: nowrap;
+}
 .stream-video-wrap {
   position: relative;
-  flex: 1;
+  /* Trava a proporção em 16:9 (padrão de tela cheia) — sem isso a altura da
+     caixa ficava ambígua (definida por `flex:1` num container sem altura
+     própria) e sobrava espaço vazio embaixo do vídeo por causa do
+     letterboxing do `object-fit:contain`. Travando a proporção, a caixa já
+     nasce do tamanho exato do vídeo, sem sobra. */
+  aspect-ratio: 16 / 9;
+  width: 100%;
   display: flex;
   min-height: 0;
+}
+/* No modo foco a altura é definida pelo layout (não pela proporção do
+   vídeo — a pessoa pode estar compartilhando algo fora de 16:9), então
+   volta ao comportamento antigo: preenche o espaço disponível e deixa o
+   `object-fit: contain` cuidar de eventuais barras. */
+.streams-grid.has-focus .stream-card .stream-video-wrap {
+  aspect-ratio: auto;
+  flex: 1;
 }
 .stream-video {
   width: 100%;
@@ -571,6 +593,20 @@ input[type="text"]::placeholder { color: var(--text3); }
   text-align: right;
   font-family: var(--mono);
 }
+
+/* Qualidade da transmissão (economia de banda) — por espectador */
+.quality-select {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  border-radius: var(--radius-sm);
+  padding: 3px 4px;
+  font-size: 10px;
+  font-family: var(--font);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.quality-select:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ═══════════════════════════════════════════
    MODAL DE FONTE

@@ -433,7 +433,7 @@ function makeParticipantItem(uid, name, sharing, isMe) {
 
   const watching   = state.watching.has(uid)
   const connecting = state.connecting.has(uid)
-  const watchLabel = connecting ? 'Conectando…' : (watching ? 'Assistindo' : 'Assistir')
+  const watchLabel = connecting ? 'Conectando…' : (watching ? 'Parar de assistir' : 'Assistir')
 
   li.innerHTML = `
     <div class="participant-avatar">${initial}</div>
@@ -824,19 +824,30 @@ function upsertStreamCard(uid, stream) {
         </div>
       </div>
       <div class="stream-controls">
-        <span class="vol-icon">🔊</span>
-        <input type="range" class="vol-slider" min="0" max="100" value="100" />
-        <span class="vol-value">100%</span>
+        <button type="button" class="vol-icon muted" title="Ativar som">🔇</button>
+        <input type="range" class="vol-slider" min="0" max="100" value="0" />
+        <span class="vol-value">0%</span>
       </div>
     `
 
     // Clicar na stream coloca ela em foco (as demais minimizam embaixo)
     card.addEventListener('click', () => toggleFocus(uid))
 
-    // Controle de volume — 0% a 100% (não interfere no foco)
+    // Controle de volume — 0% a 100% (não interfere no foco). A live
+    // sempre começa mutada (0%) — a pessoa escolhe ativar o som.
     const video = card.querySelector('video')
     const slider = card.querySelector('.vol-slider')
     const volValue = card.querySelector('.vol-value')
+    const volIcon = card.querySelector('.vol-icon')
+    let lastVolume = 100 // pra restaurar ao clicar no ícone depois de mutar
+
+    function syncVolumeIcon() {
+      const muted = video.muted || Number(slider.value) === 0
+      volIcon.textContent = muted ? '🔇' : '🔊'
+      volIcon.title = muted ? 'Ativar som' : 'Mutar'
+      volIcon.classList.toggle('muted', muted)
+    }
+
     slider.addEventListener('click', (e) => e.stopPropagation())
     slider.addEventListener('input', () => {
       const v = Number(slider.value)
@@ -845,7 +856,30 @@ function upsertStreamCard(uid, stream) {
       // comentário mais abaixo), essa interação do usuário é um gesto
       // válido pro navegador permitir desmutar aqui.
       video.muted = v === 0
+      if (v > 0) lastVolume = v
       volValue.textContent = `${v}%`
+      syncVolumeIcon()
+      if (video.paused) video.play().catch(() => {})
+    })
+
+    // Ícone de volume também funciona como botão de mutar/desmutar rápido
+    volIcon.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const isMuted = video.muted || Number(slider.value) === 0
+      if (isMuted) {
+        const restore = lastVolume > 0 ? lastVolume : 100
+        slider.value = restore
+        video.volume = restore / 100
+        video.muted = false
+        volValue.textContent = `${restore}%`
+      } else {
+        lastVolume = Number(slider.value) || lastVolume
+        slider.value = 0
+        video.volume = 0
+        video.muted = true
+        volValue.textContent = '0%'
+      }
+      syncVolumeIcon()
       if (video.paused) video.play().catch(() => {})
     })
 
@@ -867,12 +901,12 @@ function upsertStreamCard(uid, stream) {
     // Corrige o bug da "tela preta": desde que passamos a compartilhar áudio
     // junto do vídeo, o Chromium/Electron bloqueia o autoplay de um <video>
     // não mutado com faixa de áudio sem interação do usuário — o vídeo nunca
-    // chega a tocar e fica preto. Começamos mutado (autoplay sempre permitido
-    // nesse caso), tocamos, e só então desmutamos no volume escolhido.
-    const targetVolume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
+    // chega a tocar e fica preto. A live sempre inicia mutada (0% — ver
+    // template do card acima) então o autoplay é sempre permitido aqui;
+    // quem assiste ativa o som depois, pelo ícone ou pelo slider.
     video.muted = true
     video.srcObject = stream
-    video.volume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
+    video.volume = Number(card.querySelector('.vol-slider')?.value ?? 0) / 100
     video.play().catch((err) => {
       // AbortError: play() interrompido porque srcObject mudou antes do
       // promise resolver (ontrack dispara para vídeo e áudio em sequência).

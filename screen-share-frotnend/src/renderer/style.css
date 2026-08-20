@@ -354,7 +354,10 @@ input[type="text"]::placeholder { color: var(--text3); }
   white-space: nowrap;
 }
 .btn-watch:hover { border-color: var(--accent); color: var(--accent); }
-.btn-watch.watching { background: rgba(79,142,247,.15); border-color: var(--accent); color: var(--accent); }
+/* Assistindo → vira "Parar de assistir" em vermelho, deixando claro que o
+   clique agora encerra a transmissão em vez de iniciar outra. */
+.btn-watch.watching { background: rgba(224,92,92,.15); border-color: var(--red); color: var(--red); }
+.btn-watch.watching:hover { border-color: var(--red); color: var(--red); }
 /* Negociação WebRTC em andamento — visual distinto de "watching" (que já
    virou antes da hora, confundindo com um clique de "tentar de novo" e
    cancelando bem na hora em que o vídeo ia chegar). */
@@ -401,13 +404,6 @@ input[type="text"]::placeholder { color: var(--text3); }
 }
 .btn-leave:hover { border-color: var(--red); color: var(--red); }
 
-.hint-audio {
-  font-size: 10px;
-  color: var(--text3);
-  line-height: 1.4;
-  padding: 0 2px;
-}
-
 /* STAGE */
 .stage {
   flex: 1;
@@ -452,6 +448,7 @@ input[type="text"]::placeholder { color: var(--text3); }
   display: flex;
   flex-wrap: wrap;
   align-content: flex-start;
+  justify-content: center;
   overflow-y: auto;
 }
 .streams-grid.has-focus .stream-card.focused {
@@ -553,7 +550,19 @@ input[type="text"]::placeholder { color: var(--text3); }
   flex-shrink: 0;
   cursor: default;
 }
-.vol-icon { font-size: 12px; }
+/* Ícone de volume agora também é o botão de mutar/desmutar rápido */
+.vol-icon {
+  font-size: 12px;
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: 1;
+  color: inherit;
+  cursor: pointer;
+  transition: transform .1s;
+}
+.vol-icon:hover { transform: scale(1.15); }
+.vol-icon.muted { opacity: .7; }
 .vol-slider { flex: 1; accent-color: var(--accent); cursor: pointer; }
 .vol-value {
   font-size: 11px;

@@ -404,6 +404,40 @@ input[type="text"]::placeholder { color: var(--text3); }
 }
 .btn-leave:hover { border-color: var(--red); color: var(--red); }
 
+.self-preview-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 2px 2px;
+}
+.self-preview-option input { accent-color: var(--accent); cursor: pointer; }
+
+/* ═══════════════════════════════════════════
+   AUTOVISUALIZAÇÃO (canto inferior direito, opcional)
+═══════════════════════════════════════════ */
+.self-preview {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 130;
+  width: 220px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.self-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
 /* STAGE */
 .stage {
   flex: 1;
@@ -502,6 +536,11 @@ input[type="text"]::placeholder { color: var(--text3); }
   background: var(--green);
   box-shadow: 0 0 6px var(--green);
 }
+.stream-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 /* Resolução/bitrate reais recebidos (getStats, ver upsertStreamCard) —
    prova ao vivo de que o seletor de qualidade está funcionando. */
 .stream-stats {
@@ -510,6 +549,19 @@ input[type="text"]::placeholder { color: var(--text3); }
   color: var(--text3);
   white-space: nowrap;
 }
+/* Picture-in-Picture — abre a stream numa janela flutuante do SO */
+.pip-btn {
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: color .15s, transform .1s;
+}
+.pip-btn:hover { color: var(--accent); transform: scale(1.1); }
+.pip-btn.active { color: var(--accent); }
 .stream-video-wrap {
   position: relative;
   /* Trava a proporção em 16:9 (padrão de tela cheia) — sem isso a altura da

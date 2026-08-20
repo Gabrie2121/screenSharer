@@ -82,6 +82,10 @@
           <span class="share-icon">⬡</span>
           <span id="share-btn-text">Compartilhar tela</span>
         </button>
+        <label class="self-preview-option">
+          <input type="checkbox" id="chk-self-preview" />
+          <span>Mostrar minha tela (canto inferior direito)</span>
+        </label>
         <button class="btn-leave" id="btn-leave">Sair da sala</button>
       </div>
     </aside>
@@ -135,6 +139,14 @@
 
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
+
+  <!-- AUTOVISUALIZAÇÃO — sua própria tela, opcional (ver checkbox na
+       sidebar), canto inferior direito. Nunca transmite som (só uma
+       prévia local, sempre mudo) e não é enviada a ninguém — é o mesmo
+       state.localStream que já vai pros outros participantes. -->
+  <div id="self-preview" class="self-preview hidden">
+    <video id="self-preview-video" autoplay muted playsinline></video>
+  </div>
 
   <!-- VERSÃO — canto inferior esquerdo, sempre visível em qualquer tela.
        Também funciona como botão de "verificar atualização" manual. -->

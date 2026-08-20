@@ -10,6 +10,8 @@
 // ──────────────────────────────────────────────
 // ESTADO
 // ──────────────────────────────────────────────
+const SELF_PREVIEW_KEY = 'sharesync:show-self-preview'
+
 const state = {
   myId:      null,
   myName:    '',
@@ -47,10 +49,16 @@ const state = {
   // porque o card foi removido no meio do play — DOMException no console).
   connecting: new Set(),
 
-  // Minha stream local (quando compartilho) — nunca é exibida na tela,
-  // só é usada para enviar aos outros participantes.
+  // Minha stream local (quando compartilho) — por padrão não aparece na
+  // tela, só é usada pra enviar aos outros participantes. Opcionalmente
+  // (ver checkbox "Mostrar minha tela") aparece numa prévia local mudinha
+  // no canto inferior direito (ver updateSelfPreview).
   localStream: null,
   sharing: false,
+
+  // Preferência de mostrar a autovisualização — persiste em sessionStorage
+  // (SELF_PREVIEW_KEY) e vira o padrão pras próximas vezes que compartilhar.
+  showSelfPreview: sessionStorage.getItem(SELF_PREVIEW_KEY) === 'true',
 
   // Stream em foco na tela (as demais ficam minimizadas embaixo)
   focusedId: null,
@@ -754,6 +762,41 @@ function removeUser(uid) {
 }
 
 // ──────────────────────────────────────────────
+// AUTOVISUALIZAÇÃO — opcional, canto inferior direito, sempre mudo.
+// Preferência salva em sessionStorage e usada como padrão dali pra frente.
+// ──────────────────────────────────────────────
+const chkSelfPreview = $('chk-self-preview')
+chkSelfPreview.checked = state.showSelfPreview
+
+chkSelfPreview.onchange = () => {
+  state.showSelfPreview = chkSelfPreview.checked
+  sessionStorage.setItem(SELF_PREVIEW_KEY, String(state.showSelfPreview))
+  updateSelfPreview()
+}
+
+function updateSelfPreview() {
+  const wrap = $('self-preview')
+  const video = $('self-preview-video')
+  const show = state.sharing && state.showSelfPreview && state.localStream
+
+  wrap.classList.toggle('hidden', !show)
+
+  if (!show) {
+    video.srcObject = null
+    return
+  }
+
+  // Sempre mudo — é só uma prévia local, nunca deve tocar som (o pedido
+  // era explícito: "que não transmita som"). Não é enviada a ninguém, é a
+  // mesma state.localStream que já vai pros outros participantes.
+  video.muted = true
+  if (video.srcObject !== state.localStream) {
+    video.srcObject = state.localStream
+    video.play().catch(() => {})
+  }
+}
+
+// ──────────────────────────────────────────────
 // COMPARTILHAR TELA
 // ──────────────────────────────────────────────
 $('btn-toggle-share').onclick = async () => {
@@ -921,8 +964,10 @@ async function captureSource(sourceId, quality) {
 
     track.onended = () => stopSharing()
 
-    // A própria tela compartilhada NÃO é exibida para quem está
-    // compartilhando — só os outros participantes a veem.
+    // Por padrão a própria tela compartilhada não aparece — só os outros
+    // participantes a veem. Se a preferência estiver ativa, mostra a
+    // prévia local mudinha no canto inferior direito (ver updateSelfPreview).
+    updateSelfPreview()
     renderParticipants()
     appLog('INFO', `Compartilhamento iniciado (áudio: ${stream.getAudioTracks().length > 0}, `
       + `qualidade: ${quality.resolution}p@${quality.fps}fps)`)
@@ -959,7 +1004,10 @@ function upsertStreamCard(uid, stream) {
     card.innerHTML = `
       <div class="stream-header">
         <span class="stream-name">${username}</span>
-        <span class="stream-stats" title="Resolução e bitrate recebidos agora"></span>
+        <div class="stream-header-actions">
+          <span class="stream-stats" title="Resolução e bitrate recebidos agora"></span>
+          <button type="button" class="pip-btn" title="Ver em Picture-in-Picture">🗔</button>
+        </div>
       </div>
       <div class="stream-video-wrap">
         <video class="stream-video" autoplay muted playsinline></video>
@@ -1075,6 +1123,31 @@ function upsertStreamCard(uid, stream) {
       } catch { /* pc pode já ter fechado entre o tick e a leitura */ }
     }, 2000)
 
+    // Picture-in-Picture — janela flutuante nativa do SO, independente da
+    // janela do app. O botão de fechar dela já é da própria janela nativa
+    // (a gente só escuta o evento pra manter nosso botão sincronizado).
+    const pipBtn = card.querySelector('.pip-btn')
+    if (!document.pictureInPictureEnabled || video.disablePictureInPicture) {
+      pipBtn.classList.add('hidden')
+    } else {
+      pipBtn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        try {
+          if (document.pictureInPictureElement === video) {
+            await document.exitPictureInPicture()
+          } else {
+            await video.requestPictureInPicture()
+          }
+        } catch (err) {
+          console.warn('[PIP] Falha ao abrir Picture-in-Picture:', err)
+          appLog('WARN', `Falha ao abrir Picture-in-Picture para ${uid}: ${err.message}`)
+          toast('Não foi possível abrir o Picture-in-Picture.')
+        }
+      })
+      video.addEventListener('enterpictureinpicture', () => pipBtn.classList.add('active'))
+      video.addEventListener('leavepictureinpicture', () => pipBtn.classList.remove('active'))
+    }
+
     grid.appendChild(card)
   }
 
@@ -1116,6 +1189,12 @@ function removeStreamCard(uid) {
   clearInterval(state.statsIntervals[uid])
   delete state.statsIntervals[uid]
   const card = $('streams-grid').querySelector(`[data-stream="${uid}"]`)
+  // Sem isso, a janela flutuante de Picture-in-Picture ficava travada
+  // mostrando um vídeo cujo elemento acabou de sair do DOM.
+  const video = card?.querySelector('video')
+  if (video && document.pictureInPictureElement === video) {
+    document.exitPictureInPicture().catch(() => {})
+  }
   card?.remove()
   if (state.focusedId === uid) state.focusedId = null
   updateGridLayout()
@@ -1172,6 +1251,7 @@ function stopSharing() {
   state.localStream?.getTracks().forEach(t => t.stop())
   state.localStream = null
   state.sharing = false
+  updateSelfPreview()
 
   $('btn-toggle-share').classList.remove('sharing')
   $('share-btn-text').textContent = 'Compartilhar tela'
@@ -1204,6 +1284,7 @@ $('btn-leave').onclick = () => {
   state.focusedId = null
   Object.values(state.statsIntervals).forEach(id => clearInterval(id))
   state.statsIntervals = {}
+  if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {})
   $('streams-grid').innerHTML = ''
   $('stage-empty').classList.remove('hidden')
   $('streams-grid').classList.add('hidden')

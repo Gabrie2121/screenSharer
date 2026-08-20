@@ -38,12 +38,23 @@ autoUpdater.logger = {
 }
 
 autoUpdater.on('update-available', (info) => {
+  pendingManualCheck = false
   log('INFO', `Atualização disponível: v${info.version}`)
   mainWindow?.webContents.send('update-available', { version: info.version })
 })
 
+// Verificação automática no início fica silenciosa se não achar nada (senão
+// toda abertura do app mostraria um aviso à toa); já uma checagem manual
+// (clique no badge de versão) precisa de retorno pra pessoa saber que
+// rodou e não achou nada — ver `pendingManualCheck`.
+let pendingManualCheck = false
+
 autoUpdater.on('update-not-available', () => {
   log('INFO', 'Nenhuma atualização disponível')
+  if (pendingManualCheck) {
+    pendingManualCheck = false
+    mainWindow?.webContents.send('update-not-available')
+  }
 })
 
 autoUpdater.on('download-progress', (progress) => {
@@ -58,6 +69,7 @@ autoUpdater.on('update-downloaded', () => {
 })
 
 autoUpdater.on('error', (err) => {
+  pendingManualCheck = false
   log('ERROR', `Falha no auto-update: ${err.message}`)
   mainWindow?.webContents.send('update-error', { message: err.message })
 })
@@ -74,15 +86,27 @@ ipcMain.on('update-install', () => {
   autoUpdater.quitAndInstall()
 })
 
-function checkForUpdates() {
+function checkForUpdates(manual = false) {
   if (!app.isPackaged) {
     log('INFO', 'Auto-update ignorado (app rodando em modo dev, não empacotado)')
+    if (manual) {
+      mainWindow?.webContents.send('update-error', {
+        message: 'Checagem de atualização não disponível em modo de desenvolvimento.',
+      })
+    }
     return
   }
+  if (manual) pendingManualCheck = true
   autoUpdater.checkForUpdates().catch((err) => {
     log('ERROR', `Falha ao verificar atualizações: ${err.message}`)
   })
 }
+
+// Verificação manual disparada pelo clique no badge de versão (ver app.js)
+ipcMain.on('check-for-updates', () => {
+  log('INFO', 'Usuário pediu verificação manual de atualização')
+  checkForUpdates(true)
+})
 
 function createWindow() {
   const win = new BrowserWindow({

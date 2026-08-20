@@ -672,9 +672,12 @@ input[type="text"]::placeholder { color: var(--text3); }
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px 10px;
-  pointer-events: none;
+  cursor: pointer;
   user-select: none;
+  transition: border-color .15s, color .15s;
 }
+/* Também é o botão de "verificar atualização" manual */
+.app-version:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ═══════════════════════════════════════════
    BOTÃO DE ATUALIZAÇÃO (canto inferior esquerdo, acima da versão)

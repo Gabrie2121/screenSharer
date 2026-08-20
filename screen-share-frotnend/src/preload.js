@@ -16,10 +16,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   log: (level, message) => ipcRenderer.send('renderer-log', level, message),
 
   // Auto-update
-  startUpdate:        () => ipcRenderer.send('update-start'),
-  installUpdate:      () => ipcRenderer.send('update-install'),
-  onUpdateAvailable:  (cb) => ipcRenderer.on('update-available', (_e, data) => cb(data)),
-  onUpdateProgress:   (cb) => ipcRenderer.on('update-download-progress', (_e, data) => cb(data)),
-  onUpdateReady:      (cb) => ipcRenderer.on('update-ready', () => cb()),
-  onUpdateError:      (cb) => ipcRenderer.on('update-error', (_e, data) => cb(data)),
+  startUpdate:          () => ipcRenderer.send('update-start'),
+  installUpdate:        () => ipcRenderer.send('update-install'),
+  checkForUpdates:      () => ipcRenderer.send('check-for-updates'),
+  onUpdateAvailable:    (cb) => ipcRenderer.on('update-available', (_e, data) => cb(data)),
+  onUpdateNotAvailable: (cb) => ipcRenderer.on('update-not-available', () => cb()),
+  onUpdateProgress:     (cb) => ipcRenderer.on('update-download-progress', (_e, data) => cb(data)),
+  onUpdateReady:        (cb) => ipcRenderer.on('update-ready', () => cb()),
+  onUpdateError:        (cb) => ipcRenderer.on('update-error', (_e, data) => cb(data)),
 })

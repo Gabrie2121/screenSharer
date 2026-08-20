@@ -9,6 +9,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Captura de tela
   getSources: () => ipcRenderer.invoke('get-sources'),
 
+  // Versão do app (exibida sempre no canto inferior esquerdo)
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
   // Log básico do app (grava em disco via processo principal)
   log: (level, message) => ipcRenderer.send('renderer-log', level, message),
+
+  // Auto-update
+  startUpdate:        () => ipcRenderer.send('update-start'),
+  installUpdate:      () => ipcRenderer.send('update-install'),
+  onUpdateAvailable:  (cb) => ipcRenderer.on('update-available', (_e, data) => cb(data)),
+  onUpdateProgress:   (cb) => ipcRenderer.on('update-download-progress', (_e, data) => cb(data)),
+  onUpdateReady:      (cb) => ipcRenderer.on('update-ready', () => cb()),
+  onUpdateError:      (cb) => ipcRenderer.on('update-error', (_e, data) => cb(data)),
 })

@@ -355,6 +355,10 @@ input[type="text"]::placeholder { color: var(--text3); }
 }
 .btn-watch:hover { border-color: var(--accent); color: var(--accent); }
 .btn-watch.watching { background: rgba(79,142,247,.15); border-color: var(--accent); color: var(--accent); }
+/* Negociação WebRTC em andamento — visual distinto de "watching" (que já
+   virou antes da hora, confundindo com um clique de "tentar de novo" e
+   cancelando bem na hora em que o vídeo ia chegar). */
+.btn-watch.connecting { background: none; border-style: dashed; border-color: var(--text3); color: var(--text2); }
 
 /* SIDEBAR FOOTER */
 .sidebar-footer {
@@ -643,6 +647,52 @@ input[type="text"]::placeholder { color: var(--text3); }
   transition: opacity .25s;
 }
 .toast.show { opacity: 1; }
+
+/* ═══════════════════════════════════════════
+   VERSÃO DO APP (canto inferior esquerdo, sempre visível)
+═══════════════════════════════════════════ */
+.app-version {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 140;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ═══════════════════════════════════════════
+   BOTÃO DE ATUALIZAÇÃO (canto inferior esquerdo, acima da versão)
+═══════════════════════════════════════════ */
+.btn-update {
+  position: fixed;
+  left: 16px;
+  bottom: 52px;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(79,142,247,.35);
+  transition: background .15s, transform .1s;
+}
+.btn-update:hover:not(:disabled) { background: var(--accent2); transform: translateY(-1px); }
+.btn-update:disabled { cursor: default; opacity: .85; }
+.btn-update .update-icon { font-size: 13px; }
+.btn-update.error { background: var(--red); box-shadow: 0 4px 16px rgba(224,92,92,.35); }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }

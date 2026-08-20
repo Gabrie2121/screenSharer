@@ -1,6 +1,9 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
+
+let mainWindow = null
 
 // ──────────────────────────────────────────────
 // LOG BÁSICO (processo principal)
@@ -18,6 +21,67 @@ function log(level, message) {
   } catch (err) {
     console.error('Falha ao gravar log:', err)
   }
+}
+
+// ──────────────────────────────────────────────
+// AUTO-UPDATE
+// Verifica o GitHub Releases (config em package.json → build.publish) e
+// avisa o renderer, que mostra o botão de atualização no canto inferior
+// esquerdo da sidebar. O download/instalação só rodam quando a pessoa clica.
+// ──────────────────────────────────────────────
+autoUpdater.autoDownload = false
+autoUpdater.autoInstallOnAppQuit = false
+autoUpdater.logger = {
+  info:  (msg) => log('INFO', `[updater] ${msg}`),
+  warn:  (msg) => log('WARN', `[updater] ${msg}`),
+  error: (msg) => log('ERROR', `[updater] ${msg}`),
+}
+
+autoUpdater.on('update-available', (info) => {
+  log('INFO', `Atualização disponível: v${info.version}`)
+  mainWindow?.webContents.send('update-available', { version: info.version })
+})
+
+autoUpdater.on('update-not-available', () => {
+  log('INFO', 'Nenhuma atualização disponível')
+})
+
+autoUpdater.on('download-progress', (progress) => {
+  mainWindow?.webContents.send('update-download-progress', {
+    percent: Math.round(progress.percent),
+  })
+})
+
+autoUpdater.on('update-downloaded', () => {
+  log('INFO', 'Atualização baixada — aguardando confirmação do usuário para reiniciar')
+  mainWindow?.webContents.send('update-ready')
+})
+
+autoUpdater.on('error', (err) => {
+  log('ERROR', `Falha no auto-update: ${err.message}`)
+  mainWindow?.webContents.send('update-error', { message: err.message })
+})
+
+ipcMain.on('update-start', () => {
+  log('INFO', 'Usuário iniciou o download da atualização')
+  autoUpdater.downloadUpdate()
+})
+
+// Só instala e reinicia quando a pessoa confirma — evita derrubar uma
+// sessão de compartilhamento em andamento sem aviso (ver 'update-ready' acima).
+ipcMain.on('update-install', () => {
+  log('INFO', 'Usuário confirmou — instalando atualização e reiniciando')
+  autoUpdater.quitAndInstall()
+})
+
+function checkForUpdates() {
+  if (!app.isPackaged) {
+    log('INFO', 'Auto-update ignorado (app rodando em modo dev, não empacotado)')
+    return
+  }
+  autoUpdater.checkForUpdates().catch((err) => {
+    log('ERROR', `Falha ao verificar atualizações: ${err.message}`)
+  })
 }
 
 function createWindow() {
@@ -46,7 +110,14 @@ function createWindow() {
     })
   })
 
+  // Só checa atualizações depois que o renderer termina de carregar —
+  // do contrário 'update-available' pode ser enviado antes do listener
+  // IPC ser registrado em app.js, e o Electron não bufferiza a mensagem.
+  win.webContents.once('did-finish-load', () => checkForUpdates())
+
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+  mainWindow = win
+  win.on('closed', () => { if (mainWindow === win) mainWindow = null })
 }
 
 // Permite que o renderer também grave eventos no log básico do app
@@ -59,6 +130,9 @@ ipcMain.on('window-maximize', (e) => {
   win?.isMaximized() ? win.unmaximize() : win.maximize()
 })
 ipcMain.on('window-close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
+
+// Versão exibida no canto inferior esquerdo (ver context.MD → Features)
+ipcMain.handle('get-app-version', () => app.getVersion())
 
 ipcMain.handle('get-sources', async () => {
   const sources = await desktopCapturer.getSources({

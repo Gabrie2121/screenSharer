@@ -19,8 +19,17 @@ const state = {
   // WebSocket
   ws: null,
 
-  // Peers: { userId: RTCPeerConnection }
-  peers: {},
+  // Cada par de usuários pode ter DUAS conexões independentes, uma pra
+  // cada sentido — "eu assisto ele" e "ele assiste eu" são coisas
+  // diferentes e podem estar ativas ao mesmo tempo (assistir mútuo).
+  // Antes isso dividia uma única RTCPeerConnection por usuário, e cada
+  // offer recém-chegada substituía a conexão existente por baixo do pano
+  // — causava colisão de sinalização (glare) e a tela ficava preta pro
+  // outro lado quando os dois se assistiam ao mesmo tempo.
+  // watchPeers: { userId: RTCPeerConnection } — eu sou o offerer, só recebo
+  watchPeers: {},
+  // sharePeers: { userId: RTCPeerConnection } — eu sou o answerer, só envio
+  sharePeers: {},
 
   // Streams recebidos: { userId: MediaStream }
   remoteStreams: {},
@@ -28,8 +37,15 @@ const state = {
   // Usuários na sala: { userId: { username, sharing } }
   users: {},
 
-  // Quem estou assistindo
+  // Quem estou assistindo (stream já chegou e está exibindo)
   watching: new Set(),
+
+  // Quem eu pedi pra assistir mas a negociação WebRTC ainda não terminou
+  // (ver toggleWatch) — importante pra não mostrar "Assistindo" antes da
+  // hora: isso fazia a pessoa clicar de novo achando que travou, cancelando
+  // a conexão bem na hora em que o vídeo chegava (video.play() interrompido
+  // porque o card foi removido no meio do play — DOMException no console).
+  connecting: new Set(),
 
   // Minha stream local (quando compartilho) — nunca é exibida na tela,
   // só é usada para enviar aos outros participantes.
@@ -42,15 +58,42 @@ const state = {
   // Medição de latência (ping)
   pingInterval: null,
   pingWaiting: false,
+
+  // Timeouts de "assistir" pendente — evita loading infinito (ver toggleWatch)
+  watchTimeouts: {},
 }
 
 // ──────────────────────────────────────────────
-// ICE SERVERS (STUN público)
+// ICE SERVERS (STUN + TURN)
+// STUN sozinho só resolve o IP público — quando as duas pontas estão em
+// redes diferentes (NAT restritivo/CGNAT de operadora, por trás de
+// firewall, etc.) a conexão direta não fecha e o ICE cai em "failed" sem
+// um TURN pra retransmitir a mídia. As credenciais abaixo são do Open
+// Relay Project (metered.ca) — gratuitas e compartilhadas, então servem
+// pra destravar o uso entre amigos, mas não são garantia de uptime/banda
+// pra produção. Se a instabilidade continuar, considere subir um coturn
+// próprio ou um TURN pago.
 // ──────────────────────────────────────────────
 const ICE_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:global.relay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
 }
 
@@ -95,6 +138,70 @@ function toast(msg) {
 $('btn-min').onclick   = () => window.electronAPI?.minimize()
 $('btn-max').onclick   = () => window.electronAPI?.maximize()
 $('btn-close').onclick = () => window.electronAPI?.close()
+
+// ──────────────────────────────────────────────
+// VERSÃO DO APP — canto inferior esquerdo, em toda a tela do sistema
+// ──────────────────────────────────────────────
+window.electronAPI?.getAppVersion().then((version) => {
+  $('app-version').textContent = `v${version}`
+})
+
+// ──────────────────────────────────────────────
+// ATUALIZAÇÃO DO APP
+// Botão fica escondido até o processo principal avisar que há uma versão
+// nova (ver src/main.js). Um clique baixa, instala e reinicia sozinho.
+// ──────────────────────────────────────────────
+const btnUpdate = $('btn-update')
+const updateText = $('update-text')
+
+// Depois que o download termina, a atualização só é instalada quando a
+// pessoa confirma clicando de novo — reiniciar sozinho derrubaria uma
+// sessão de compartilhamento em andamento sem aviso.
+let updateReady = false
+
+btnUpdate.onclick = () => {
+  if (btnUpdate.disabled) return
+
+  if (updateReady) {
+    appLog('INFO', 'Usuário confirmou reinício para instalar a atualização')
+    window.electronAPI?.installUpdate()
+    return
+  }
+
+  btnUpdate.disabled = true
+  btnUpdate.classList.remove('error')
+  updateText.textContent = 'Baixando atualização…'
+  appLog('INFO', 'Download de atualização iniciado pelo usuário')
+  window.electronAPI?.startUpdate()
+}
+
+window.electronAPI?.onUpdateAvailable(({ version }) => {
+  appLog('INFO', `Nova versão disponível: v${version}`)
+  updateReady = false
+  btnUpdate.classList.remove('hidden', 'error')
+  btnUpdate.disabled = false
+  updateText.textContent = `Atualizar para v${version}`
+})
+
+window.electronAPI?.onUpdateProgress(({ percent }) => {
+  updateText.textContent = `Baixando atualização… ${percent}%`
+})
+
+window.electronAPI?.onUpdateReady(() => {
+  appLog('INFO', 'Atualização baixada — aguardando confirmação para reiniciar')
+  updateReady = true
+  btnUpdate.classList.remove('error')
+  btnUpdate.disabled = false
+  updateText.textContent = 'Reiniciar para atualizar'
+})
+
+window.electronAPI?.onUpdateError(({ message }) => {
+  appLog('ERROR', `Falha na atualização: ${message}`)
+  updateReady = false
+  btnUpdate.classList.add('error')
+  btnUpdate.disabled = false
+  updateText.textContent = 'Erro ao atualizar — tentar de novo'
+})
 
 // ──────────────────────────────────────────────
 // LOGIN
@@ -164,8 +271,10 @@ function connectWebSocket() {
     appLog('WARN', 'Desconectado do servidor.')
     toast('Desconectado do servidor.')
     // Limpa peers
-    Object.values(state.peers).forEach(pc => pc.close())
-    state.peers = {}
+    Object.values(state.watchPeers).forEach(pc => pc.close())
+    Object.values(state.sharePeers).forEach(pc => pc.close())
+    state.watchPeers = {}
+    state.sharePeers = {}
     stopPing()
   }
 }
@@ -265,10 +374,14 @@ async function handleMessage(msg) {
     case 'user-stopped-sharing':
       if (state.users[msg.user_id]) {
         state.users[msg.user_id].sharing = false
+        stopWatchTimeout(msg.user_id)
         state.watching.delete(msg.user_id)
+        state.connecting.delete(msg.user_id)
         renderParticipants()
         removeStreamCard(msg.user_id)
-        closePeer(msg.user_id)
+        // Só fecha a conexão em que EU assistia essa pessoa — se ela
+        // também estiver me assistindo, essa outra conexão continua de pé.
+        closeWatchPeer(msg.user_id)
       }
       break
 
@@ -320,7 +433,9 @@ function makeParticipantItem(uid, name, sharing, isMe) {
     ? (isMe ? '● Compartilhando' : '● Compartilhando')
     : (isMe ? 'Você' : 'Participante')
 
-  const watching = state.watching.has(uid)
+  const watching   = state.watching.has(uid)
+  const connecting = state.connecting.has(uid)
+  const watchLabel = connecting ? 'Conectando…' : (watching ? 'Assistindo' : 'Assistir')
 
   li.innerHTML = `
     <div class="participant-avatar">${initial}</div>
@@ -329,8 +444,8 @@ function makeParticipantItem(uid, name, sharing, isMe) {
       <div class="participant-status ${sharing ? 'sharing' : ''}">${statusText}</div>
     </div>
     ${(!isMe && sharing)
-      ? `<button class="btn-watch ${watching ? 'watching' : ''}" data-uid="${uid}">
-           ${watching ? 'Assistindo' : 'Assistir'}
+      ? `<button class="btn-watch ${watching ? 'watching' : ''} ${connecting ? 'connecting' : ''}" data-uid="${uid}">
+           ${watchLabel}
          </button>`
       : ''}
   `
@@ -346,19 +461,52 @@ function makeParticipantItem(uid, name, sharing, isMe) {
 // ──────────────────────────────────────────────
 // ASSISTIR / PARAR DE ASSISTIR
 // ──────────────────────────────────────────────
+// Precisa ser folgado o bastante pra não cancelar uma conexão que ainda
+// está negociando o fallback TURN via TCP/443 (ver ICE_CONFIG acima) —
+// em redes restritivas essa negociação sozinha pode levar vários segundos.
+const WATCH_TIMEOUT_MS = 25000
+
 async function toggleWatch(uid) {
   if (state.watching.has(uid)) {
-    // Para de assistir
+    // Para de assistir (ou cancela uma conexão ainda "Conectando…") —
+    // fecha só a MINHA conexão de assistir. Se essa pessoa também estiver
+    // me assistindo, a conexão dela continua de pé.
+    stopWatchTimeout(uid)
     state.watching.delete(uid)
-    closePeer(uid)
+    state.connecting.delete(uid)
+    closeWatchPeer(uid)
     removeStreamCard(uid)
     renderParticipants()
   } else {
-    // Começa a assistir — inicia negociação WebRTC
+    // Começa a assistir — inicia negociação WebRTC. Fica em "connecting"
+    // até o primeiro track chegar (ver ontrack em createPeer), pra não
+    // mostrar "Assistindo" antes da hora.
     state.watching.add(uid)
+    state.connecting.add(uid)
     renderParticipants()
     await startPeerConnection(uid)
+
+    // Corrige o "carregando infinito": se em N segundos nenhum track
+    // chegar (offer perdida, pessoa parou de compartilhar, ICE travado),
+    // desiste, avisa e libera o botão para tentar de novo.
+    stopWatchTimeout(uid)
+    state.watchTimeouts[uid] = setTimeout(() => {
+      delete state.watchTimeouts[uid]
+      if (!state.watching.has(uid) || state.remoteStreams[uid]) return
+      appLog('WARN', `Timeout esperando stream de ${uid} — cancelando`)
+      state.watching.delete(uid)
+      state.connecting.delete(uid)
+      closeWatchPeer(uid)
+      removeStreamCard(uid)
+      renderParticipants()
+      toast('Não foi possível carregar essa tela. Tente assistir de novo.')
+    }, WATCH_TIMEOUT_MS)
   }
+}
+
+function stopWatchTimeout(uid) {
+  clearTimeout(state.watchTimeouts[uid])
+  delete state.watchTimeouts[uid]
 }
 
 // ──────────────────────────────────────────────
@@ -368,7 +516,7 @@ async function toggleWatch(uid) {
 // WEBRTC
 // ──────────────────────────────────────────────
 async function startPeerConnection(remoteId) {
-  const pc = createPeer(remoteId, false)
+  const pc = createPeer(remoteId, 'watcher')
 
   const offer = await pc.createOffer({
     offerToReceiveVideo: true,
@@ -379,40 +527,78 @@ async function startPeerConnection(remoteId) {
   sendWS({ type: 'offer', to: remoteId, payload: offer })
 }
 
-function createPeer(remoteId, isAnswerer) {
-  if (state.peers[remoteId]) {
-    state.peers[remoteId].close()
-    delete state.peers[remoteId]
+// role: 'watcher' → eu inicio a oferta pra RECEBER a tela de remoteId.
+// role: 'sharer'  → eu respondo a uma oferta ENVIANDO minha tela pra remoteId.
+// As duas conexões são independentes (mapas separados) porque "eu assisto
+// ele" e "ele me assiste" podem estar ativos ao mesmo tempo; antes disso
+// havia uma única RTCPeerConnection por usuário e a offer de um lado
+// derrubava a conexão do outro lado no meio da negociação (glare),
+// deixando a tela preta pra quem estava assistindo mutuamente.
+function createPeer(remoteId, role) {
+  const map = role === 'watcher' ? state.watchPeers : state.sharePeers
+  if (map[remoteId]) {
+    map[remoteId].close()
+    delete map[remoteId]
   }
 
   const pc = new RTCPeerConnection(ICE_CONFIG)
-  state.peers[remoteId] = pc
+  map[remoteId] = pc
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
-      sendWS({ type: 'ice-candidate', to: remoteId, payload: e.candidate })
+      // Marca de qual das duas conexões esse candidato veio, pra quem
+      // recebe saber em qual pc local aplicar (ver handleIceCandidate).
+      sendWS({ type: 'ice-candidate', to: remoteId, payload: { candidate: e.candidate, role } })
     }
   }
 
   pc.oniceconnectionstatechange = () => {
-    console.log(`[ICE ${remoteId}]`, pc.iceConnectionState)
+    console.log(`[ICE ${role} ${remoteId}]`, pc.iceConnectionState)
   }
 
   pc.onconnectionstatechange = () => {
-    console.log(`[CONN ${remoteId}]`, pc.connectionState)
+    console.log(`[CONN ${role} ${remoteId}]`, pc.connectionState)
+
+    if (pc.connectionState === 'failed') {
+      appLog('WARN', `Conexão (${role}) com ${remoteId} falhou (ICE não conseguiu conectar nem via TURN)`)
+
+      if (role === 'watcher') {
+        // Se eu estava assistindo essa pessoa, limpa o card e deixa
+        // tentar de novo — sem isso o card ficava "conectado" mas preto/parado.
+        if (state.watching.has(remoteId)) {
+          state.watching.delete(remoteId)
+          state.connecting.delete(remoteId)
+          removeStreamCard(remoteId)
+          renderParticipants()
+          toast('A conexão com essa tela falhou. Tente assistir de novo.')
+        }
+        closeWatchPeer(remoteId)
+      } else {
+        closeSharePeer(remoteId)
+      }
+    }
   }
 
-  // Quem ASSISTE recebe a stream aqui
-  pc.ontrack = (e) => {
-    console.log(`[TRACK de ${remoteId}]`, e.track.kind, e.streams)
-    const stream = e.streams[0]
-    if (!stream) return
-    state.remoteStreams[remoteId] = stream
-    upsertStreamCard(remoteId, stream)
+  // Só a conexão em que EU assisto (watcher) recebe stream aqui.
+  if (role === 'watcher') {
+    pc.ontrack = (e) => {
+      console.log(`[TRACK de ${remoteId}]`, e.track.kind, e.streams)
+      const stream = e.streams[0]
+      if (!stream) return
+      stopWatchTimeout(remoteId)
+      // Só agora o botão vira "Assistindo" — antes disso ficava
+      // "Conectando…" (ver makeParticipantItem) pra ninguém clicar de
+      // novo achando que travou e cancelar bem na hora em que o vídeo
+      // ia carregar. Um stream chega em tracks separados (vídeo + áudio),
+      // então só re-renderiza a lista na primeira vez que isso muda.
+      if (state.connecting.delete(remoteId)) renderParticipants()
+      state.remoteStreams[remoteId] = stream
+      upsertStreamCard(remoteId, stream)
+    }
   }
 
-  // Se é o RESPONDEDOR (quem compartilha), adiciona tracks agora
-  if (isAnswerer && state.sharing && state.localStream) {
+  // Se é a conexão em que eu COMPARTILHO (sharer), adiciona tracks agora
+  if (role === 'sharer' && state.sharing && state.localStream) {
     state.localStream.getTracks().forEach(track => {
       console.log('[ADD TRACK]', track.kind)
       pc.addTrack(track, state.localStream)
@@ -422,7 +608,7 @@ function createPeer(remoteId, isAnswerer) {
   return pc
 }
 
-// Recebe offer (quem está compartilhando)
+// Recebe offer (alguém quer assistir minha tela) — eu respondo como sharer
 async function handleOffer(fromId, offer) {
   console.log('[OFFER recebida de]', fromId, '| sharing:', state.sharing)
 
@@ -432,7 +618,7 @@ async function handleOffer(fromId, offer) {
   }
 
   // Cria peer JÁ com os tracks antes de responder
-  const pc = createPeer(fromId, true)
+  const pc = createPeer(fromId, 'sharer')
 
   await pc.setRemoteDescription(new RTCSessionDescription(offer))
 
@@ -445,34 +631,47 @@ async function handleOffer(fromId, offer) {
 
 async function handleAnswer(fromId, answer) {
   console.log('[ANSWER recebido de]', fromId)
-  const pc = state.peers[fromId]
+  // Só a minha conexão de watcher fica esperando uma answer.
+  const pc = state.watchPeers[fromId]
   if (!pc) return
   await pc.setRemoteDescription(new RTCSessionDescription(answer))
 }
 
-async function handleIceCandidate(fromId, candidate) {
-  const pc = state.peers[fromId]
+async function handleIceCandidate(fromId, payload) {
+  // payload.role é o papel de QUEM ENVIOU nessa conexão específica — pra
+  // mim, o candidato é da conexão oposta: se ele mandou como 'watcher'
+  // (ele assistindo a mim), esse candidato é da MINHA conexão de sharer
+  // com ele, e vice-versa.
+  const role = payload?.role === 'watcher' ? 'sharer' : 'watcher'
+  const pc = role === 'watcher' ? state.watchPeers[fromId] : state.sharePeers[fromId]
   if (!pc) {
-    console.warn('[ICE] Peer não encontrado para', fromId)
+    console.warn('[ICE] Peer não encontrado para', fromId, role)
     return
   }
   try {
-    await pc.addIceCandidate(new RTCIceCandidate(candidate))
+    await pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
   } catch (e) {
     console.warn('[ICE ERROR]', e)
   }
 }
 
-function closePeer(uid) {
-  state.peers[uid]?.close()
-  delete state.peers[uid]
+function closeWatchPeer(uid) {
+  state.watchPeers[uid]?.close()
+  delete state.watchPeers[uid]
   delete state.remoteStreams[uid]
+}
+
+function closeSharePeer(uid) {
+  state.sharePeers[uid]?.close()
+  delete state.sharePeers[uid]
 }
 
 function removeUser(uid) {
   delete state.users[uid]
   state.watching.delete(uid)
-  closePeer(uid)
+  state.connecting.delete(uid)
+  closeWatchPeer(uid)
+  closeSharePeer(uid)
   removeStreamCard(uid)
   renderParticipants()
 }
@@ -629,6 +828,10 @@ function upsertStreamCard(uid, stream) {
     slider.addEventListener('input', () => {
       const v = Number(slider.value)
       video.volume = v / 100
+      // Se o autoplay mudo inicial não conseguiu desmutar sozinho (ver
+      // comentário mais abaixo), essa interação do usuário é um gesto
+      // válido pro navegador permitir desmutar aqui.
+      video.muted = v === 0
       volValue.textContent = `${v}%`
     })
 
@@ -642,8 +845,30 @@ function upsertStreamCard(uid, stream) {
   loading?.classList.remove('hidden')
   video.onloadeddata = () => loading?.classList.add('hidden')
 
-  video.srcObject = stream
-  video.volume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
+  // Uma tela compartilhada chega em tracks separadas (vídeo + áudio), cada
+  // uma disparando ontrack → upsertStreamCard pra essa MESMA stream. Sem
+  // essa checagem, chamávamos video.play() duas vezes quase juntas no
+  // mesmo elemento, o que pode abortar uma chamada com a outra.
+  if (video.srcObject !== stream) {
+    // Corrige o bug da "tela preta": desde que passamos a compartilhar áudio
+    // junto do vídeo, o Chromium/Electron bloqueia o autoplay de um <video>
+    // não mutado com faixa de áudio sem interação do usuário — o vídeo nunca
+    // chega a tocar e fica preto. Começamos mutado (autoplay sempre permitido
+    // nesse caso), tocamos, e só então desmutamos no volume escolhido.
+    const targetVolume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
+    video.muted = true
+    video.srcObject = stream
+    video.volume = targetVolume
+    video.play()
+      .then(() => { video.muted = false })
+      .catch((err) => {
+        console.warn(`[AUTOPLAY] Bloqueado para ${uid}:`, err)
+        appLog('WARN', `Autoplay bloqueado para stream de ${uid}: ${err.message}`)
+        // Fica mudo até a pessoa mexer no slider de volume (ver o listener
+        // 'input' acima) — dali em diante já é um gesto do usuário, que o
+        // navegador aceita como permissão pra desmutar.
+      })
+  }
 
   updateGridLayout()
 }
@@ -712,7 +937,11 @@ function stopSharing() {
 
   sendWS({ type: 'stop-sharing' })
 
-  Object.keys(state.peers).forEach(uid => closePeer(uid))
+  // Só fecha as conexões em que EU estava enviando minha tela — antes
+  // isso fechava também as conexões em que eu estava assistindo outras
+  // pessoas (mesmo mapa pros dois sentidos), derrubando o que eu via
+  // só porque eu parei de compartilhar a minha.
+  Object.keys(state.sharePeers).forEach(uid => closeSharePeer(uid))
 
   renderParticipants()
   appLog('INFO', 'Compartilhamento encerrado')
@@ -725,9 +954,11 @@ $('btn-leave').onclick = () => {
   stopSharing()
   state.ws?.close()
   stopPing()
-  state.peers = {}
+  state.watchPeers = {}
+  state.sharePeers = {}
   state.users = {}
   state.watching.clear()
+  state.connecting.clear()
   state.remoteStreams = {}
   state.focusedId = null
   $('streams-grid').innerHTML = ''

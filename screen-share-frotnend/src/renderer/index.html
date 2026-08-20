@@ -38,7 +38,7 @@
 
         <div class="field-group">
           <label for="input-server">Servidor</label>
-          <input id="input-server" type="text" value="ws://localhost:8000" placeholder="ws://..." />
+          <input id="input-server" type="text" value="ws://177.85.121.34:8000" placeholder="ws://..." />
         </div>
 
         <div class="login-actions">
@@ -113,6 +113,15 @@
 
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
+
+  <!-- VERSÃO — canto inferior esquerdo, sempre visível em qualquer tela -->
+  <div id="app-version" class="app-version"></div>
+
+  <!-- ATUALIZAÇÃO — canto inferior esquerdo (acima da versão), só aparece quando há update -->
+  <button id="btn-update" class="btn-update hidden" title="Baixar e instalar atualização">
+    <span class="update-icon">⬇</span>
+    <span id="update-text">Atualização disponível</span>
+  </button>
 
   <script src="app.js"></script>
 </body>

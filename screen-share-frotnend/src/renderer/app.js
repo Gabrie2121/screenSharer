@@ -716,9 +716,16 @@ $('btn-toggle-share').onclick = async () => {
   }
 }
 
+// Qualidade de transmissão — resolução (altura, em px) e taxa de quadros.
+// Escolhidas no modal de fonte, aplicadas como constraints da captura.
+const QUALITY_HEIGHTS = { 720: { width: 1280, height: 720 }, 1080: { width: 1920, height: 1080 } }
+let selectedSourceId = null
+let selectedQuality = { resolution: 1080, fps: 30 }
+
 async function startSharing() {
   // Pede ao main process a lista de fontes
   const sources = await window.electronAPI.getSources()
+  selectedSourceId = null
   showSourcePicker(sources)
 }
 
@@ -729,23 +736,88 @@ function showSourcePicker(sources) {
   sources.forEach(src => {
     const div = document.createElement('div')
     div.className = 'source-item'
+    div.dataset.sourceId = src.id
     div.innerHTML = `
       <img class="source-thumb" src="${src.thumbnail}" alt="${src.name}" />
       <div class="source-label">${src.name}</div>
     `
-    div.onclick = () => captureSource(src.id)
+    div.onclick = () => selectSource(src.id)
     grid.appendChild(div)
   })
 
+  updateTransmitButton()
   $('modal-source').classList.remove('hidden')
 }
 
-$('btn-close-modal').onclick = () => $('modal-source').classList.add('hidden')
-$('modal-source').onclick = (e) => {
-  if (e.target === $('modal-source')) $('modal-source').classList.add('hidden')
+// Seleciona a fonte (tela/janela) sem já iniciar a transmissão — quem
+// dispara é o botão "Transmitir", depois de escolher a qualidade também.
+function selectSource(sourceId) {
+  selectedSourceId = sourceId
+  $('source-grid').querySelectorAll('.source-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.sourceId === sourceId)
+  })
+  updateTransmitButton()
 }
 
-async function captureSource(sourceId) {
+function updateTransmitButton() {
+  $('btn-start-transmit').disabled = !selectedSourceId
+}
+
+// Grupos de botões de qualidade (resolução / FPS) — só um ativo por grupo
+function setupQualityGroup(containerId, onChange) {
+  const container = $(containerId)
+  container.querySelectorAll('.quality-opt').forEach(btn => {
+    btn.onclick = () => {
+      container.querySelectorAll('.quality-opt').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      onChange(Number(btn.dataset.value))
+    }
+  })
+}
+setupQualityGroup('quality-resolution', (v) => { selectedQuality.resolution = v })
+setupQualityGroup('quality-fps', (v) => { selectedQuality.fps = v })
+
+function closeSourceModal() {
+  $('modal-source').classList.add('hidden')
+  selectedSourceId = null
+}
+
+$('btn-close-modal').onclick = () => closeSourceModal()
+$('modal-source').onclick = (e) => {
+  if (e.target === $('modal-source')) closeSourceModal()
+}
+
+$('btn-start-transmit').onclick = () => {
+  if (!selectedSourceId) return
+  captureSource(selectedSourceId, selectedQuality)
+}
+
+// Constraints de vídeo (getDisplayMedia) pra qualidade escolhida
+function buildVideoConstraints({ resolution, fps }) {
+  const { width, height } = QUALITY_HEIGHTS[resolution] || QUALITY_HEIGHTS[1080]
+  return {
+    width:     { ideal: width, max: width },
+    height:    { ideal: height, max: height },
+    frameRate: { ideal: fps, max: fps },
+  }
+}
+
+// Constraints equivalentes no formato antigo (mandatory), usado só no
+// último fallback via getUserMedia + chromeMediaSourceId.
+function buildMandatoryVideoConstraints(sourceId, { resolution, fps }) {
+  const { width, height } = QUALITY_HEIGHTS[resolution] || QUALITY_HEIGHTS[1080]
+  return {
+    mandatory: {
+      chromeMediaSource: 'desktop',
+      chromeMediaSourceId: sourceId,
+      minWidth: width, maxWidth: width,
+      minHeight: height, maxHeight: height,
+      minFrameRate: fps, maxFrameRate: fps,
+    },
+  }
+}
+
+async function captureSource(sourceId, quality) {
   $('modal-source').classList.add('hidden')
 
   try {
@@ -756,7 +828,7 @@ async function captureSource(sourceId) {
     let audioIssue = null
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        video: buildVideoConstraints(quality),
         audio: true,
         systemAudio: 'include',
       })
@@ -772,21 +844,12 @@ async function captureSource(sourceId) {
       audioIssue = err
       appLog('WARN', `Captura de áudio do sistema falhou (${err.message}) — tentando só vídeo`)
       try {
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: buildVideoConstraints(quality), audio: false })
       } catch {
         // Último recurso: getUserMedia com sourceId específico, só vídeo
         // (pular áudio aqui também, já que acabamos de ver que ele falha)
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            mandatory: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: sourceId,
-              minWidth: 1280,
-              maxWidth: 1920,
-              minHeight: 720,
-              maxHeight: 1080,
-            },
-          },
+          video: buildMandatoryVideoConstraints(sourceId, quality),
         })
       }
     }
@@ -796,7 +859,8 @@ async function captureSource(sourceId) {
       return
     }
 
-    console.log('Stream capturada:', stream.getVideoTracks()[0].label,
+    const track = stream.getVideoTracks()[0]
+    console.log('Stream capturada:', track.label, track.getSettings(),
       '| áudio:', stream.getAudioTracks().length > 0)
 
     state.localStream = stream
@@ -807,12 +871,13 @@ async function captureSource(sourceId) {
 
     sendWS({ type: 'start-sharing' })
 
-    stream.getVideoTracks()[0].onended = () => stopSharing()
+    track.onended = () => stopSharing()
 
     // A própria tela compartilhada NÃO é exibida para quem está
     // compartilhando — só os outros participantes a veem.
     renderParticipants()
-    appLog('INFO', `Compartilhamento iniciado (áudio: ${stream.getAudioTracks().length > 0})`)
+    appLog('INFO', `Compartilhamento iniciado (áudio: ${stream.getAudioTracks().length > 0}, `
+      + `qualidade: ${quality.resolution}p@${quality.fps}fps)`)
     if (audioIssue) {
       toast('Compartilhando a tela sem áudio — não foi possível capturar o áudio do sistema.')
     } else {

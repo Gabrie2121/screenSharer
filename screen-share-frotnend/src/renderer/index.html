@@ -107,6 +107,29 @@
         <button class="icon-btn" id="btn-close-modal">✕</button>
       </div>
       <div id="source-grid" class="source-grid"></div>
+
+      <div class="modal-quality">
+        <div class="quality-group">
+          <span class="quality-label">Resolução</span>
+          <div class="quality-options" id="quality-resolution">
+            <button type="button" class="quality-opt" data-value="720">720p</button>
+            <button type="button" class="quality-opt active" data-value="1080">1080p</button>
+          </div>
+        </div>
+        <div class="quality-group">
+          <span class="quality-label">Taxa de quadros</span>
+          <div class="quality-options" id="quality-fps">
+            <button type="button" class="quality-opt active" data-value="30">30 FPS</button>
+            <button type="button" class="quality-opt" data-value="60">60 FPS</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-primary" id="btn-start-transmit" disabled>
+          <span class="btn-icon">▶</span> Transmitir
+        </button>
+      </div>
     </div>
   </div>
 

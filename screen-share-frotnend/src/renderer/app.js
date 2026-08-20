@@ -819,7 +819,7 @@ function upsertStreamCard(uid, stream) {
         <span class="stream-name">${username}</span>
       </div>
       <div class="stream-video-wrap">
-        <video class="stream-video" autoplay playsinline></video>
+        <video class="stream-video" autoplay muted playsinline></video>
         <div class="stream-loading">
           <div class="spinner"></div>
           <span>Carregando tela…</span>
@@ -848,6 +848,7 @@ function upsertStreamCard(uid, stream) {
       // válido pro navegador permitir desmutar aqui.
       video.muted = v === 0
       volValue.textContent = `${v}%`
+      if (video.paused) video.play().catch(() => {})
     })
 
     grid.appendChild(card)
@@ -873,16 +874,15 @@ function upsertStreamCard(uid, stream) {
     const targetVolume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
     video.muted = true
     video.srcObject = stream
-    video.volume = targetVolume
-    video.play()
-      .then(() => { video.muted = false })
-      .catch((err) => {
-        console.warn(`[AUTOPLAY] Bloqueado para ${uid}:`, err)
-        appLog('WARN', `Autoplay bloqueado para stream de ${uid}: ${err.message}`)
-        // Fica mudo até a pessoa mexer no slider de volume (ver o listener
-        // 'input' acima) — dali em diante já é um gesto do usuário, que o
-        // navegador aceita como permissão pra desmutar.
-      })
+    video.volume = Number(card.querySelector('.vol-slider')?.value ?? 100) / 100
+    video.play().catch((err) => {
+      // AbortError: play() interrompido porque srcObject mudou antes do
+      // promise resolver (ontrack dispara para vídeo e áudio em sequência).
+      // Não é bloqueio real — o play() mais recente vai rodar sozinho.
+      if (err.name === 'AbortError') return
+      console.warn(`[AUTOPLAY] Bloqueado para ${uid}:`, err)
+      appLog('WARN', `Autoplay bloqueado para stream de ${uid}: ${err.message}`)
+    })
   }
 
   updateGridLayout()

@@ -1,6 +1,6 @@
 {
   "name": "screen-share-electron",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Compartilhamento de tela via WebRTC",
   "main": "src/main.js",
   "scripts": {

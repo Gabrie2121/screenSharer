@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShareSync</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- TITLEBAR -->
+  <div class="titlebar">
+    <div class="titlebar-drag">
+      <span class="app-logo">⬡</span>
+      <span class="app-name">ShareSync</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="tb-btn" id="btn-min" title="Minimizar">─</button>
+      <button class="tb-btn" id="btn-max" title="Maximizar">□</button>
+      <button class="tb-btn tb-close" id="btn-close" title="Fechar">✕</button>
+    </div>
+  </div>
+
+  <!-- ══════════ TELA: LOGIN ══════════ -->
+  <div id="screen-login" class="screen active">
+    <div class="login-wrap">
+      <div class="login-brand">
+        <div class="brand-icon">⬡</div>
+        <h1>ShareSync</h1>
+        <p class="brand-sub">Compartilhe sua tela com quem você quiser</p>
+      </div>
+
+      <div class="login-card">
+        <div class="field-group">
+          <label for="input-name">Seu nome</label>
+          <input id="input-name" type="text" placeholder="Como quer ser chamado?" maxlength="32" />
+        </div>
+
+        <div class="field-group">
+          <label for="input-server">Servidor</label>
+          <input id="input-server" type="text" value="ws://localhost:8000" placeholder="ws://..." />
+        </div>
+
+        <div class="login-actions">
+          <button class="btn-primary" id="btn-create-room">
+            <span class="btn-icon">+</span> Criar sala
+          </button>
+          <div class="divider"><span>ou entre com o código</span></div>
+          <div class="join-row">
+            <input id="input-room-id" type="text" placeholder="Código da sala" maxlength="8" />
+            <button class="btn-secondary" id="btn-join-room">Entrar</button>
+          </div>
+        </div>
+
+        <p id="login-error" class="error-msg hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ TELA: SALA ══════════ -->
+  <div id="screen-room" class="screen">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="room-label">Sala</span>
+        <div class="room-id-box">
+          <span id="display-room-id">--------</span>
+          <button id="btn-copy-id" class="icon-btn" title="Copiar código">⎘</button>
+        </div>
+      </div>
+
+      <div class="participants-label">Participantes</div>
+      <ul id="participants-list" class="participants-list"></ul>
+
+      <div class="sidebar-footer">
+        <button class="btn-share" id="btn-toggle-share">
+          <span class="share-icon">⬡</span>
+          <span id="share-btn-text">Compartilhar tela</span>
+        </button>
+        <button class="btn-leave" id="btn-leave">Sair da sala</button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <!-- Estado vazio -->
+      <div id="stage-empty" class="stage-empty">
+        <div class="empty-icon">⬡</div>
+        <p>Nenhuma tela sendo compartilhada</p>
+        <span>Aguarde alguém compartilhar ou inicie você mesmo</span>
+      </div>
+
+      <!-- Grid de streams -->
+      <div id="streams-grid" class="streams-grid hidden"></div>
+    </main>
+  </div>
+
+  <!-- MODAL: escolher fonte de captura -->
+  <div id="modal-source" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Escolher o que compartilhar</h2>
+        <button class="icon-btn" id="btn-close-modal">✕</button>
+      </div>
+      <div id="source-grid" class="source-grid"></div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

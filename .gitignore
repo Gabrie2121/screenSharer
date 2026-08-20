@@ -1,0 +1,11 @@
+node_modules/
+node_modules
+/node_modules/
+venv
+/venv
+/venv/
+/dist
+dist
+dist/
+/__pycache__
+context.MD

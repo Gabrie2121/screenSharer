@@ -164,8 +164,12 @@ function toastTop(msg) {
 }
 
 // Aviso sonoro quando alguém começa a compartilhar — src/assets/holy.mp3
-// (caminho relativo a este arquivo, src/renderer/app.js).
+// (caminho relativo a este arquivo, src/renderer/app.js). Fica em 40% do
+// volume o tempo todo e corta em 1s — o arquivo original dura mais que
+// isso, mas só precisamos do começo como aviso rápido.
 const shareSound = new Audio('../assets/holy.mp3')
+shareSound.volume = 0.4
+let shareSoundCutTimer = null
 
 function playShareSound() {
   try {
@@ -173,6 +177,11 @@ function playShareSound() {
     shareSound.play().catch((err) => {
       console.warn('[SOM] Falha ao tocar aviso de compartilhamento:', err)
     })
+    clearTimeout(shareSoundCutTimer)
+    shareSoundCutTimer = setTimeout(() => {
+      shareSound.pause()
+      shareSound.currentTime = 0
+    }, 1000)
   } catch (err) {
     console.warn('[SOM] Falha ao tocar aviso de compartilhamento:', err)
   }
@@ -1025,6 +1034,11 @@ async function captureVideoOnly(sourceId, quality) {
 async function captureSource(sourceId, quality) {
   $('modal-source').classList.add('hidden')
 
+  // Avisa o processo principal qual fonte usar quando o getDisplayMedia()
+  // abaixo disparar o setDisplayMediaRequestHandler (main.js) — sem isso,
+  // ele sempre pegava a primeira tela da lista, ignorando a escolhida aqui.
+  window.electronAPI?.setCaptureSourceId(sourceId)
+
   try {
     let stream
     let audioIssue = null
@@ -1119,8 +1133,31 @@ function upsertStreamCard(uid, stream) {
         <span class="stream-name">${username}</span>
         <div class="stream-header-actions">
           <span class="stream-stats" title="Resolução e bitrate recebidos agora"></span>
+
+          <select class="quality-select" title="Qualidade da transmissão (economiza banda)">
+            <option value="auto">Automática</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+            <option value="360">360p</option>
+          </select>
+
+          <div class="vol-control">
+            <button type="button" class="vol-icon muted" title="Volume">🔇</button>
+            <div class="vol-popover hidden">
+              <input type="range" class="vol-slider" min="0" max="100" value="0" />
+              <span class="vol-value">0%</span>
+            </div>
+          </div>
+
           <button type="button" class="fullscreen-btn" title="Tela cheia">⛶</button>
-          <button type="button" class="pip-btn" title="Ver em Picture-in-Picture">🗔</button>
+          <button type="button" class="pip-btn" title="Ver em Picture-in-Picture">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="5" width="18" height="14" rx="2"/>
+              <path d="M9 15 L16 8"/>
+              <path d="M11 8 H16 V13"/>
+            </svg>
+          </button>
         </div>
       </div>
       <div class="stream-video-wrap">
@@ -1129,18 +1166,6 @@ function upsertStreamCard(uid, stream) {
           <div class="spinner"></div>
           <span>Carregando tela…</span>
         </div>
-      </div>
-      <div class="stream-controls">
-        <button type="button" class="vol-icon muted" title="Ativar som">🔇</button>
-        <input type="range" class="vol-slider" min="0" max="100" value="0" />
-        <span class="vol-value">0%</span>
-        <select class="quality-select" title="Qualidade da transmissão (economiza banda)">
-          <option value="auto">Automática</option>
-          <option value="1080">1080p</option>
-          <option value="720">720p</option>
-          <option value="480">480p</option>
-          <option value="360">360p</option>
-        </select>
       </div>
     `
 
@@ -1152,13 +1177,15 @@ function upsertStreamCard(uid, stream) {
       toggleFocus(uid)
     })
 
-    // Controle de volume — 0% a 100% (não interfere no foco). A live
-    // sempre começa mutada (0%) — a pessoa escolhe ativar o som.
+    // Controle de volume — dropdown: clicar no ícone abre/fecha um
+    // popover com o slider (0% a 100%, mostra a porcentagem ao arrastar),
+    // em vez de uma barra fixa ocupando espaço embaixo da transmissão. A
+    // live sempre começa mutada (0%) — a pessoa escolhe ativar o som.
     const video = card.querySelector('video')
     const slider = card.querySelector('.vol-slider')
     const volValue = card.querySelector('.vol-value')
     const volIcon = card.querySelector('.vol-icon')
-    let lastVolume = 100 // pra restaurar ao clicar no ícone depois de mutar
+    const volPopover = card.querySelector('.vol-popover')
 
     // Transmissão sem áudio (a pessoa escolheu "Sem som" ao compartilhar,
     // ou a captura de áudio falhou) — bloqueia o controle de volume dessa
@@ -1175,11 +1202,20 @@ function upsertStreamCard(uid, stream) {
     function syncVolumeIcon() {
       const muted = video.muted || Number(slider.value) === 0
       volIcon.textContent = muted ? '🔇' : '🔊'
-      volIcon.title = muted ? 'Ativar som' : 'Mutar'
       volIcon.classList.toggle('muted', muted)
     }
 
-    slider.addEventListener('click', (e) => e.stopPropagation())
+    // Clicar no ícone abre/fecha o popover do slider (fecha sozinho ao
+    // clicar fora — ver listener global no fim do arquivo).
+    volIcon.addEventListener('click', (e) => {
+      e.stopPropagation()
+      document.querySelectorAll('.vol-popover').forEach(p => {
+        if (p !== volPopover) p.classList.add('hidden')
+      })
+      volPopover.classList.toggle('hidden')
+    })
+    volPopover.addEventListener('click', (e) => e.stopPropagation())
+
     slider.addEventListener('input', () => {
       const v = Number(slider.value)
       video.volume = v / 100
@@ -1187,29 +1223,7 @@ function upsertStreamCard(uid, stream) {
       // comentário mais abaixo), essa interação do usuário é um gesto
       // válido pro navegador permitir desmutar aqui.
       video.muted = v === 0
-      if (v > 0) lastVolume = v
       volValue.textContent = `${v}%`
-      syncVolumeIcon()
-      if (video.paused) video.play().catch(() => {})
-    })
-
-    // Ícone de volume também funciona como botão de mutar/desmutar rápido
-    volIcon.addEventListener('click', (e) => {
-      e.stopPropagation()
-      const isMuted = video.muted || Number(slider.value) === 0
-      if (isMuted) {
-        const restore = lastVolume > 0 ? lastVolume : 100
-        slider.value = restore
-        video.volume = restore / 100
-        video.muted = false
-        volValue.textContent = `${restore}%`
-      } else {
-        lastVolume = Number(slider.value) || lastVolume
-        slider.value = 0
-        video.volume = 0
-        video.muted = true
-        volValue.textContent = '0%'
-      }
       syncVolumeIcon()
       if (video.paused) video.play().catch(() => {})
     })
@@ -1375,6 +1389,13 @@ function toggleFocus(uid) {
   updateGridLayout()
 }
 
+// Fecha qualquer popover de volume aberto ao clicar fora dele (os cliques
+// dentro do popover e no ícone que abre já param a propagação antes de
+// chegar aqui — ver upsertStreamCard).
+document.addEventListener('click', () => {
+  document.querySelectorAll('.vol-popover:not(.hidden)').forEach(p => p.classList.add('hidden'))
+})
+
 // ──────────────────────────────────────────────
 // TELA CHEIA — sincroniza o botão de cada card e corrige o grid ao sair.
 // Um card em :fullscreen sai do fluxo normal de layout enquanto ativo; sem
@@ -1394,7 +1415,13 @@ document.addEventListener('fullscreenchange', () => {
     }
   })
   clearTimeout(hideControlsTimer)
-  if (fsCard) resetControlsHideTimer()
+  clearTimeout(hideHeadersTimer)
+  $('streams-grid').classList.remove('headers-hidden')
+  if (fsCard) {
+    resetControlsHideTimer()
+  } else {
+    resetHeadersHideTimer()
+  }
   updateGridLayout()
 })
 
@@ -1411,8 +1438,26 @@ function resetControlsHideTimer() {
     fsCard.classList.add('controls-hidden')
   }, 3000)
 }
+// Mesma ideia fora da tela cheia, só que 5s (não está tampando o vídeo,
+// então não precisa sumir tão rápido) e escondendo só o cabeçalho (os
+// controles de volume/qualidade fora do fullscreen já ficam junto do card
+// normalmente, sem precisar desse tratamento).
+let hideHeadersTimer = null
+function resetHeadersHideTimer() {
+  const grid = $('streams-grid')
+  grid.classList.remove('headers-hidden')
+  clearTimeout(hideHeadersTimer)
+  hideHeadersTimer = setTimeout(() => {
+    grid.classList.add('headers-hidden')
+  }, 5000)
+}
+
 document.addEventListener('mousemove', () => {
-  if (document.fullscreenElement) resetControlsHideTimer()
+  if (document.fullscreenElement) {
+    resetControlsHideTimer()
+  } else {
+    resetHeadersHideTimer()
+  }
 })
 
 function updateGridLayout() {

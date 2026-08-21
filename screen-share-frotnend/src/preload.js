@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Captura de tela
   getSources: () => ipcRenderer.invoke('get-sources'),
+  // Avisa o processo principal qual fonte foi escolhida no modal, pra ele
+  // usar no setDisplayMediaRequestHandler (getDisplayMedia não carrega o id
+  // da fonte no request, então esse vínculo precisa ser feito por fora).
+  setCaptureSourceId: (id) => ipcRenderer.send('set-capture-source-id', id),
 
   // Versão do app (exibida sempre no canto inferior esquerdo)
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),

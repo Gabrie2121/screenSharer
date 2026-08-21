@@ -81,9 +81,15 @@ ipcMain.on('update-start', () => {
 
 // Só instala e reinicia quando a pessoa confirma — evita derrubar uma
 // sessão de compartilhamento em andamento sem aviso (ver 'update-ready' acima).
+// quitAndInstall(isSilent, isForceRunAfter): sem os argumentos, o Windows
+// abre o instalador NSIS completo (escolher pasta, Next, Instalar, Concluir)
+// toda vez que atualiza — exatamente o assistente que só faz sentido na
+// primeira instalação. Com isSilent=true ele roda com a flag /S do NSIS
+// (sem nenhuma UI, só substitui os arquivos) e isForceRunAfter=true garante
+// que o app reabre sozinho depois — no modo silencioso isso não é automático.
 ipcMain.on('update-install', () => {
-  log('INFO', 'Usuário confirmou — instalando atualização e reiniciando')
-  autoUpdater.quitAndInstall()
+  log('INFO', 'Usuário confirmou — instalando atualização (silenciosa) e reiniciando')
+  autoUpdater.quitAndInstall(true, true)
 })
 
 function checkForUpdates(manual = false) {
@@ -131,10 +137,15 @@ function createWindow() {
   // (`request.audioRequested`) — o renderer cai pra um retry só de vídeo
   // quando a captura de áudio falha (ver captureSource em app.js), e se
   // aqui a gente forçasse 'loopback' sempre, esse retry falharia igual.
+  //
+  // A fonte a usar é a que a pessoa escolheu no modal "Escolher o que
+  // compartilhar" (ver pendingSourceId, setado via IPC pouco antes do
+  // getDisplayMedia() em captureSource/app.js) — `getDisplayMedia()` não
+  // carrega esse id no `request`, por isso o vínculo é feito por fora.
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-      // Pega a primeira tela disponível automaticamente
-      callback({ video: sources[0], audio: request.audioRequested ? 'loopback' : undefined })
+      const match = sources.find((s) => s.id === pendingSourceId) || sources[0]
+      callback({ video: match, audio: request.audioRequested ? 'loopback' : undefined })
     })
   })
 
@@ -173,6 +184,11 @@ ipcMain.handle('get-sources', async () => {
     thumbnail: s.thumbnail.toDataURL(),
   }))
 })
+
+// Fonte escolhida no modal de compartilhar (ver captureSource em app.js) —
+// usada pelo setDisplayMediaRequestHandler acima.
+let pendingSourceId = null
+ipcMain.on('set-capture-source-id', (_e, id) => { pendingSourceId = id })
 
 app.whenReady().then(() => {
   log('INFO', '🚀 App iniciado')

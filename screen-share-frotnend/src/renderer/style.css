@@ -379,7 +379,12 @@ input[type="text"]::placeholder { color: var(--text3); }
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+/* Altura fixa nos 3 (não só padding igual) — com padding igual mas
+   font-size diferente (ícone grande vs texto pequeno), o conteúdo em si
+   tinha uma "linha" mais alta e os botões de ícone ficavam ~1.5x mais
+   altos que o de sair mesmo com o mesmo padding. */
 .btn-share {
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -388,8 +393,8 @@ input[type="text"]::placeholder { color: var(--text3); }
   border: 1px solid rgba(79,142,247,.3);
   color: var(--accent);
   border-radius: var(--radius-sm);
-  padding: 10px;
-  font-size: 22px;
+  padding: 0 10px;
+  font-size: 20px;
   font-weight: 600;
   cursor: pointer;
   transition: all .15s;
@@ -401,6 +406,7 @@ input[type="text"]::placeholder { color: var(--text3); }
   color: var(--red);
 }
 .btn-settings {
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -408,20 +414,21 @@ input[type="text"]::placeholder { color: var(--text3); }
   border: 1px solid var(--border);
   color: var(--text2);
   border-radius: var(--radius-sm);
-  padding: 10px;
-  font-size: 22px;
+  padding: 0 10px;
+  font-size: 20px;
   cursor: pointer;
   transition: all .15s;
 }
 .btn-settings:hover { border-color: var(--accent); color: var(--accent); }
-/* Mesma altura dos botões acima (padding:10px) — vermelha por padrão, não
-   só no hover, já que sair da sala é uma ação de "saída". */
+/* Vermelho por padrão, não só no hover, já que sair da sala é uma ação de
+   "saída". */
 .btn-leave {
+  height: 40px;
   background: transparent;
   border: 1px solid rgba(224,92,92,.35);
   color: var(--red);
   border-radius: var(--radius-sm);
-  padding: 10px;
+  padding: 0 10px;
   font-size: 13px;
   cursor: pointer;
   transition: all .15s;
@@ -510,7 +517,8 @@ input[type="text"]::placeholder { color: var(--text3); }
   opacity: .8;
 }
 .streams-grid.has-focus .stream-card.minimized:hover { opacity: 1; border-color: var(--accent); }
-.streams-grid.has-focus .stream-card.minimized .stream-controls { display: none; }
+/* Miniatura de 180x110 não tem espaço pra 4 controles — só o nome fica. */
+.streams-grid.has-focus .stream-card.minimized .stream-header-actions { display: none; }
 
 .stream-card {
   width: 100%;
@@ -524,15 +532,28 @@ input[type="text"]::placeholder { color: var(--text3); }
   cursor: pointer;
   transition: border-color .15s;
 }
+/* Padding ~20% menor que antes (era 8px/12px) — cabeçalho mais enxuto,
+   compensado por ícones/conteúdo maiores dentro dele (ver botões abaixo). */
 .stream-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--bg3);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  transition: opacity .25s;
 }
+/* Fora da tela cheia, o cabeçalho também some depois de 5s sem o mouse se
+   mexer (ver mousemove em app.js) — mesma ideia do fullscreen (3s), só que
+   com um tempo maior porque aqui não está tampando o vídeo, é só limpeza
+   visual quando ninguém está mexendo em nada. */
+.streams-grid.headers-hidden .stream-card:not(:fullscreen) .stream-header {
+  opacity: 0;
+  pointer-events: none;
+}
+/* min-width:0 + overflow/ellipsis: trunca o nome antes de espremer os
+   botões, num card estreito com nome comprido + 4 controles no cabeçalho */
 .stream-name {
   font-size: 12px;
   font-weight: 600;
@@ -540,10 +561,15 @@ input[type="text"]::placeholder { color: var(--text3); }
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .stream-name::before {
   content: '';
   display: inline-block;
+  flex-shrink: 0;
   width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--green);
@@ -553,40 +579,94 @@ input[type="text"]::placeholder { color: var(--text3); }
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 /* Resolução/bitrate reais recebidos (getStats, ver upsertStreamCard) —
    prova ao vivo de que o seletor de qualidade está funcionando. */
 .stream-stats {
   font-size: 10px;
   font-family: var(--mono);
-  color: var(--text3);
+  color: var(--green);
   white-space: nowrap;
 }
-/* Picture-in-Picture — abre a stream numa janela flutuante do SO */
-.pip-btn {
-  background: none;
-  border: none;
-  color: var(--text3);
-  font-size: 13px;
+/* Picture-in-Picture (abre a stream numa janela flutuante do SO) e Tela
+   cheia — largura/altura FIXAS e iguais (antes cada emoji tinha uma largura
+   própria — o de volume, por exemplo, acabava maior que os outros só por
+   causa do glifo). Ícone ~20% maior que antes (15px→18px) dentro de uma
+   caixa um pouco menor, já que o cabeçalho ficou mais enxuto. */
+.pip-btn,
+.fullscreen-btn,
+.vol-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: #fff;
+  font-size: 18px;
   line-height: 1;
   padding: 0;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: color .15s, transform .1s;
+  transition: all .15s;
 }
-.pip-btn:hover { color: var(--accent); transform: scale(1.1); }
-.pip-btn.active { color: var(--accent); }
-/* Tela cheia — fullscreena o card inteiro (ver JS) */
-.fullscreen-btn {
-  background: none;
-  border: none;
-  color: var(--text3);
+.pip-btn svg { width: 18px; height: 18px; }
+.pip-btn:hover,
+.fullscreen-btn:hover,
+.vol-icon:hover { border-color: var(--accent); color: var(--accent); }
+.pip-btn:hover,
+.fullscreen-btn:hover { transform: scale(1.05); }
+.pip-btn.active { border-color: var(--accent); color: var(--accent); }
+.vol-icon.muted { opacity: .75; }
+.vol-icon:disabled { cursor: default; opacity: .4; }
+.vol-icon:disabled:hover { border-color: var(--border); color: #fff; }
+/* Largura livre (tem texto de tamanho variável — "Automática" etc.), mas
+   mesma altura dos botões de ícone ao lado. */
+.quality-select {
+  height: 32px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: #fff;
+  font-family: var(--font);
   font-size: 13px;
-  line-height: 1;
-  padding: 0;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: color .15s, transform .1s;
+  transition: all .15s;
 }
-.fullscreen-btn:hover { color: var(--accent); transform: scale(1.1); }
+.quality-select:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Volume — dropdown: o ícone abre um popover com o slider por cima de
+   tudo, em vez de uma barra fixa ocupando espaço embaixo da transmissão. */
+.vol-control { position: relative; }
+.vol-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 160px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  cursor: default;
+}
+.vol-popover.hidden { display: none; }
+.vol-popover .vol-slider { flex: 1; accent-color: var(--accent); cursor: pointer; }
+.vol-popover .vol-value {
+  font-size: 11px;
+  color: var(--text3);
+  width: 32px;
+  text-align: right;
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
 .stream-video-wrap {
   position: relative;
   /* Trava a proporção em 16:9 (padrão de tela cheia) — sem isso a altura da
@@ -644,39 +724,37 @@ input[type="text"]::placeholder { color: var(--text3); }
 }
 .stream-card:fullscreen .stream-name { font-size: 16px; }
 .stream-card:fullscreen .stream-stats { font-size: 12px; }
-/* Botões maiores, com fundo/borda/sombra — em cima de vídeo, ícone sozinho
-   sem contraste quase não dava pra ver. */
+/* Botões/caixas maiores, com fundo/borda/sombra — em cima de vídeo, ícone
+   sozinho sem contraste quase não dava pra ver. Volume e qualidade agora
+   moraram pro cabeçalho junto com PiP/tela cheia (não tem mais barra
+   separada embaixo, então não corta mais nada). */
 .stream-card:fullscreen .pip-btn,
-.stream-card:fullscreen .fullscreen-btn {
-  font-size: 17px;
+.stream-card:fullscreen .fullscreen-btn,
+.stream-card:fullscreen .vol-icon {
+  width: 38px;
+  height: 38px;
+  font-size: 20px;
   background: rgba(15,17,23,.7);
   border: 1px solid rgba(255,255,255,.18);
-  border-radius: var(--radius-sm);
-  padding: 7px 9px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.4);
+}
+.stream-card:fullscreen .pip-btn svg { width: 20px; height: 20px; }
+.stream-card:fullscreen .quality-select {
+  height: 38px;
+  font-size: 14px;
+  background: rgba(15,17,23,.7);
+  border: 1px solid rgba(255,255,255,.18);
   box-shadow: 0 2px 10px rgba(0,0,0,.4);
 }
 .stream-card:fullscreen .pip-btn:hover,
-.stream-card:fullscreen .fullscreen-btn:hover {
+.stream-card:fullscreen .fullscreen-btn:hover,
+.stream-card:fullscreen .vol-icon:hover,
+.stream-card:fullscreen .quality-select:hover {
   border-color: var(--accent);
   transform: none;
 }
-.stream-card:fullscreen .stream-controls {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: auto;
-  max-width: 280px;
-  background: rgba(15,17,23,.85);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  z-index: 2;
-  transition: opacity .25s;
-}
 /* Some depois de 3s sem o mouse se mexer (ver mousemove em app.js) */
-.stream-card:fullscreen.controls-hidden .stream-header,
-.stream-card:fullscreen.controls-hidden .stream-controls {
+.stream-card:fullscreen.controls-hidden .stream-header {
   opacity: 0;
   pointer-events: none;
 }
@@ -704,55 +782,8 @@ input[type="text"]::placeholder { color: var(--text3); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Controle de volume (0% a 100%) por participante */
-.stream-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg3);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  cursor: default;
-}
-/* Ícone de volume agora também é o botão de mutar/desmutar rápido */
-.vol-icon {
-  font-size: 12px;
-  background: none;
-  border: none;
-  padding: 0;
-  line-height: 1;
-  color: inherit;
-  cursor: pointer;
-  transition: transform .1s;
-}
-.vol-icon:hover { transform: scale(1.15); }
-.vol-icon.muted { opacity: .7; }
-.vol-icon:disabled { cursor: default; opacity: .4; }
-.vol-icon:disabled:hover { transform: none; }
-.vol-slider { flex: 1; accent-color: var(--accent); cursor: pointer; }
+/* Estados do slider dentro do popover de volume (ver .vol-popover acima) */
 .vol-slider:disabled { opacity: .35; cursor: default; }
-.vol-value {
-  font-size: 11px;
-  color: var(--text3);
-  width: 34px;
-  text-align: right;
-  font-family: var(--mono);
-}
-
-/* Qualidade da transmissão (economia de banda) — por espectador */
-.quality-select {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  color: var(--text2);
-  border-radius: var(--radius-sm);
-  padding: 3px 4px;
-  font-size: 10px;
-  font-family: var(--font);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.quality-select:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ═══════════════════════════════════════════
    MODAL DE FONTE

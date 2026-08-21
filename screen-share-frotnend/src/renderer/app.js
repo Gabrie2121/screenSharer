@@ -150,6 +150,34 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2500)
 }
 
+// Toast de cima, com borda verde — separado do de baixo (que fica pra
+// "alguém entrou"/erros/etc.) pra avisos de "alguém compartilhou a tela"
+// não brigarem pelo mesmo espaço.
+let toastTopTimer = null
+function toastTop(msg) {
+  const t = $('toast-top')
+  t.textContent = msg
+  t.classList.add('show')
+  t.classList.remove('hidden')
+  clearTimeout(toastTopTimer)
+  toastTopTimer = setTimeout(() => t.classList.remove('show'), 3000)
+}
+
+// Aviso sonoro quando alguém começa a compartilhar — src/assets/holy.mp3
+// (caminho relativo a este arquivo, src/renderer/app.js).
+const shareSound = new Audio('../assets/holy.mp3')
+
+function playShareSound() {
+  try {
+    shareSound.currentTime = 0
+    shareSound.play().catch((err) => {
+      console.warn('[SOM] Falha ao tocar aviso de compartilhamento:', err)
+    })
+  } catch (err) {
+    console.warn('[SOM] Falha ao tocar aviso de compartilhamento:', err)
+  }
+}
+
 // ──────────────────────────────────────────────
 // TITLEBAR
 // ──────────────────────────────────────────────
@@ -289,6 +317,7 @@ function enterRoom(name, server, roomId) {
   state.myName   = name
   state.serverUrl = server
   state.roomId   = roomId
+  manualDisconnect = false
 
   $('display-room-id').textContent = roomId
   showScreen('room')
@@ -299,13 +328,30 @@ function enterRoom(name, server, roomId) {
 // ──────────────────────────────────────────────
 // WEBSOCKET
 // ──────────────────────────────────────────────
+// Se o servidor cair, tenta reconectar sozinho a cada 5s até voltar (ou até
+// a pessoa sair da sala de propósito — ver btn-leave, que desarma isso).
+let manualDisconnect = false
+let reconnectTimer = null
+let isReconnecting = false
+
+function scheduleReconnect() {
+  if (manualDisconnect || reconnectTimer) return
+  isReconnecting = true
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    appLog('INFO', 'Tentando reconectar ao servidor…')
+    connectWebSocket()
+  }, 5000)
+}
+
 function connectWebSocket() {
   const url = `${state.serverUrl}/ws/${state.roomId}`
   state.ws = new WebSocket(url)
 
   state.ws.onopen = () => {
     sendWS({ type: 'join-room', username: state.myName })
-    toast('Conectado à sala!')
+    toast(isReconnecting ? 'Reconectado à sala!' : 'Conectado à sala!')
+    isReconnecting = false
     startPing()
   }
 
@@ -313,18 +359,24 @@ function connectWebSocket() {
 
   state.ws.onerror = () => {
     appLog('ERROR', `Erro de conexão WebSocket com ${url}`)
-    toast('Erro de conexão com o servidor.')
+    if (!isReconnecting) toast('Erro de conexão com o servidor.')
   }
 
   state.ws.onclose = () => {
     appLog('WARN', 'Desconectado do servidor.')
-    toast('Desconectado do servidor.')
     // Limpa peers
     Object.values(state.watchPeers).forEach(pc => pc.close())
     Object.values(state.sharePeers).forEach(pc => pc.close())
     state.watchPeers = {}
     state.sharePeers = {}
     stopPing()
+
+    if (manualDisconnect) return
+
+    // Só avisa uma vez quando cai — não fica repetindo toast a cada
+    // tentativa de reconexão que falha (checa de 5 em 5s até voltar).
+    if (!isReconnecting) toast('Desconectado do servidor. Tentando reconectar…')
+    scheduleReconnect()
   }
 }
 
@@ -415,7 +467,10 @@ async function handleMessage(msg) {
       if (state.users[msg.user_id]) {
         state.users[msg.user_id].sharing = true
         renderParticipants()
-        toast(`${msg.username} está compartilhando a tela`)
+        // Toast de cima (borda verde) — separado do toast de baixo, que
+        // fica só pra entrada/saída de gente na sala e outros avisos.
+        toastTop(`${msg.username} está compartilhando a tela`)
+        playShareSound()
       }
       break
 
@@ -1012,8 +1067,11 @@ async function captureSource(sourceId, quality) {
     state.localStream = stream
     state.sharing = true
 
+    // Botão só com ícone (a sidebar ficou estreita demais pra caber texto
+    // depois que virou grid 1fr/1fr com o de configurações) — o estado
+    // (compartilhando ou não) fica no title (tooltip) e na cor de fundo.
     $('btn-toggle-share').classList.add('sharing')
-    $('share-btn-text').textContent = 'Desligar'
+    $('btn-toggle-share').title = 'Desligar compartilhamento'
 
     sendWS({ type: 'start-sharing' })
 
@@ -1061,6 +1119,7 @@ function upsertStreamCard(uid, stream) {
         <span class="stream-name">${username}</span>
         <div class="stream-header-actions">
           <span class="stream-stats" title="Resolução e bitrate recebidos agora"></span>
+          <button type="button" class="fullscreen-btn" title="Tela cheia">⛶</button>
           <button type="button" class="pip-btn" title="Ver em Picture-in-Picture">🗔</button>
         </div>
       </div>
@@ -1085,8 +1144,13 @@ function upsertStreamCard(uid, stream) {
       </div>
     `
 
-    // Clicar na stream coloca ela em foco (as demais minimizam embaixo)
-    card.addEventListener('click', () => toggleFocus(uid))
+    // Clicar na stream coloca ela em foco (as demais minimizam embaixo) —
+    // não em tela cheia, onde um clique sem querer no vídeo não devia
+    // mudar o foco por baixo dos panos.
+    card.addEventListener('click', () => {
+      if (document.fullscreenElement === card) return
+      toggleFocus(uid)
+    })
 
     // Controle de volume — 0% a 100% (não interfere no foco). A live
     // sempre começa mutada (0%) — a pessoa escolhe ativar o som.
@@ -1221,6 +1285,31 @@ function upsertStreamCard(uid, stream) {
       video.addEventListener('leavepictureinpicture', () => pipBtn.classList.remove('active'))
     }
 
+    // Tela cheia — fullscreena o card inteiro (não só o <video>), assim o
+    // botão de sair e o controle de volume continuam na tela (reposicionados
+    // via CSS `:fullscreen`, ver style.css) em vez de sumirem. O
+    // sincronismo do botão e o reflow do grid ao sair ficam no listener
+    // global de 'fullscreenchange' (ver mais abaixo).
+    const fullscreenBtn = card.querySelector('.fullscreen-btn')
+    if (!document.fullscreenEnabled) {
+      fullscreenBtn.classList.add('hidden')
+    } else {
+      fullscreenBtn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        try {
+          if (document.fullscreenElement === card) {
+            await document.exitFullscreen()
+          } else {
+            await card.requestFullscreen()
+          }
+        } catch (err) {
+          console.warn('[FULLSCREEN] Falha:', err)
+          appLog('WARN', `Falha ao entrar em tela cheia para ${uid}: ${err.message}`)
+          toast('Não foi possível entrar em tela cheia.')
+        }
+      })
+    }
+
     grid.appendChild(card)
   }
 
@@ -1268,6 +1357,11 @@ function removeStreamCard(uid) {
   if (video && document.pictureInPictureElement === video) {
     document.exitPictureInPicture().catch(() => {})
   }
+  // Mesma ideia pra tela cheia — se o card que está saindo é o que está em
+  // fullscreen, sai antes de removê-lo do DOM.
+  if (card && document.fullscreenElement === card) {
+    document.exitFullscreen().catch(() => {})
+  }
   card?.remove()
   if (state.focusedId === uid) state.focusedId = null
   updateGridLayout()
@@ -1280,6 +1374,46 @@ function toggleFocus(uid) {
   state.focusedId = state.focusedId === uid ? null : uid
   updateGridLayout()
 }
+
+// ──────────────────────────────────────────────
+// TELA CHEIA — sincroniza o botão de cada card e corrige o grid ao sair.
+// Um card em :fullscreen sai do fluxo normal de layout enquanto ativo; sem
+// recalcular o grid ao voltar, ele ficava com o layout desatualizado
+// (bugado) até alguém entrar/sair da sala de novo.
+// ──────────────────────────────────────────────
+document.addEventListener('fullscreenchange', () => {
+  const fsCard = document.fullscreenElement
+  document.querySelectorAll('.stream-card').forEach(c => {
+    const isFs = c === fsCard
+    c.classList.toggle('is-fullscreen', isFs)
+    c.classList.remove('controls-hidden')
+    const btn = c.querySelector('.fullscreen-btn')
+    if (btn) {
+      btn.textContent = isFs ? '⤬' : '⛶'
+      btn.title = isFs ? 'Sair da tela cheia' : 'Tela cheia'
+    }
+  })
+  clearTimeout(hideControlsTimer)
+  if (fsCard) resetControlsHideTimer()
+  updateGridLayout()
+})
+
+// Some com o cabeçalho/controles da tela cheia depois de 3s sem o mouse se
+// mexer (padrão de player de vídeo em fullscreen) — volta a aparecer no
+// primeiro movimento.
+let hideControlsTimer = null
+function resetControlsHideTimer() {
+  const fsCard = document.fullscreenElement
+  if (!fsCard || !fsCard.classList.contains('stream-card')) return
+  fsCard.classList.remove('controls-hidden')
+  clearTimeout(hideControlsTimer)
+  hideControlsTimer = setTimeout(() => {
+    fsCard.classList.add('controls-hidden')
+  }, 3000)
+}
+document.addEventListener('mousemove', () => {
+  if (document.fullscreenElement) resetControlsHideTimer()
+})
 
 function updateGridLayout() {
   const grid = $('streams-grid')
@@ -1327,7 +1461,7 @@ function stopSharing() {
   updateSelfPreview()
 
   $('btn-toggle-share').classList.remove('sharing')
-  $('share-btn-text').textContent = 'Compartilhar tela'
+  $('btn-toggle-share').title = 'Compartilhar tela'
 
   sendWS({ type: 'stop-sharing' })
 
@@ -1345,6 +1479,13 @@ function stopSharing() {
 // SAIR DA SALA
 // ──────────────────────────────────────────────
 $('btn-leave').onclick = () => {
+  // Desarma o auto-reconnect — sem isso, uma tentativa já agendada podia
+  // disparar depois que a pessoa já tinha saído da sala de propósito.
+  manualDisconnect = true
+  clearTimeout(reconnectTimer)
+  reconnectTimer = null
+  isReconnecting = false
+
   stopSharing()
   state.ws?.close()
   stopPing()

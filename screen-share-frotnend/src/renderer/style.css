@@ -371,13 +371,15 @@ input[type="text"]::placeholder { color: var(--text3); }
   flex-direction: column;
   gap: 8px;
 }
-/* Botão de compartilhar + botão de configurações lado a lado */
+/* Botão de compartilhar + botão de configurações — grid 1fr/1fr, mesmo
+   espaço pros dois (a sidebar é estreita demais pra caber texto nos dois
+   lados, por isso os dois viraram ícone puro, com o rótulo no title). */
 .share-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 .btn-share {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -387,7 +389,7 @@ input[type="text"]::placeholder { color: var(--text3); }
   color: var(--accent);
   border-radius: var(--radius-sm);
   padding: 10px;
-  font-size: 13px;
+  font-size: 22px;
   font-weight: 600;
   cursor: pointer;
   transition: all .15s;
@@ -399,10 +401,6 @@ input[type="text"]::placeholder { color: var(--text3); }
   color: var(--red);
 }
 .btn-settings {
-  /* Antes era meio a meio (flex:1 nos dois) — agora ocupa ~15% menos que
-     a metade, e o botão de compartilhar cresce (flex:1) pra preencher o
-     resto. */
-  flex: 0 0 42.5%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -410,22 +408,25 @@ input[type="text"]::placeholder { color: var(--text3); }
   border: 1px solid var(--border);
   color: var(--text2);
   border-radius: var(--radius-sm);
-  font-size: 16px;
+  padding: 10px;
+  font-size: 22px;
   cursor: pointer;
   transition: all .15s;
 }
 .btn-settings:hover { border-color: var(--accent); color: var(--accent); }
+/* Mesma altura dos botões acima (padding:10px) — vermelha por padrão, não
+   só no hover, já que sair da sala é uma ação de "saída". */
 .btn-leave {
   background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text3);
+  border: 1px solid rgba(224,92,92,.35);
+  color: var(--red);
   border-radius: var(--radius-sm);
-  padding: 8px;
+  padding: 10px;
   font-size: 13px;
   cursor: pointer;
   transition: all .15s;
 }
-.btn-leave:hover { border-color: var(--red); color: var(--red); }
+.btn-leave:hover { background: rgba(224,92,92,.12); border-color: var(--red); }
 
 /* ═══════════════════════════════════════════
    AUTOVISUALIZAÇÃO (canto inferior direito, opcional)
@@ -574,6 +575,18 @@ input[type="text"]::placeholder { color: var(--text3); }
 }
 .pip-btn:hover { color: var(--accent); transform: scale(1.1); }
 .pip-btn.active { color: var(--accent); }
+/* Tela cheia — fullscreena o card inteiro (ver JS) */
+.fullscreen-btn {
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: color .15s, transform .1s;
+}
+.fullscreen-btn:hover { color: var(--accent); transform: scale(1.1); }
 .stream-video-wrap {
   position: relative;
   /* Trava a proporção em 16:9 (padrão de tela cheia) — sem isso a altura da
@@ -600,6 +613,72 @@ input[type="text"]::placeholder { color: var(--text3); }
   object-fit: contain;
   background: #000;
   display: block;
+}
+
+/* Tela cheia de uma stream específica (ver JS — card.requestFullscreen()).
+   Cabeçalho e controles viram overlays flutuantes por cima do vídeo em vez
+   do layout normal em coluna, e o volume vira uma pílula compacta perto do
+   fundo em vez de uma barra cobrindo a largura inteira. */
+.stream-card:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border: none;
+  border-radius: 0;
+  background: #000;
+}
+.stream-card:fullscreen .stream-video-wrap {
+  aspect-ratio: auto;
+  flex: 1;
+}
+.stream-card:fullscreen .stream-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  padding: 18px 24px;
+  background: linear-gradient(to bottom, rgba(0,0,0,.75), transparent);
+  border-bottom: none;
+  transition: opacity .25s;
+}
+.stream-card:fullscreen .stream-name { font-size: 16px; }
+.stream-card:fullscreen .stream-stats { font-size: 12px; }
+/* Botões maiores, com fundo/borda/sombra — em cima de vídeo, ícone sozinho
+   sem contraste quase não dava pra ver. */
+.stream-card:fullscreen .pip-btn,
+.stream-card:fullscreen .fullscreen-btn {
+  font-size: 17px;
+  background: rgba(15,17,23,.7);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.4);
+}
+.stream-card:fullscreen .pip-btn:hover,
+.stream-card:fullscreen .fullscreen-btn:hover {
+  border-color: var(--accent);
+  transform: none;
+}
+.stream-card:fullscreen .stream-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: 280px;
+  background: rgba(15,17,23,.85);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  z-index: 2;
+  transition: opacity .25s;
+}
+/* Some depois de 3s sem o mouse se mexer (ver mousemove em app.js) */
+.stream-card:fullscreen.controls-hidden .stream-header,
+.stream-card:fullscreen.controls-hidden .stream-controls {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Loading — enquanto a tela da pessoa ainda não carregou */
@@ -882,6 +961,14 @@ input[type="text"]::placeholder { color: var(--text3); }
   transition: opacity .25s;
 }
 .toast.show { opacity: 1; }
+
+/* Toast de cima — "alguém compartilhou a tela", borda verde de destaque */
+.toast-top {
+  top: 20px;
+  bottom: auto;
+  border-color: var(--green);
+  box-shadow: 0 4px 16px rgba(62,207,142,.2);
+}
 
 /* ═══════════════════════════════════════════
    VERSÃO DO APP (canto inferior esquerdo, sempre visível)

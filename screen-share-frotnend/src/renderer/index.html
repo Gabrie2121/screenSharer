@@ -79,9 +79,8 @@
 
       <div class="sidebar-footer">
         <div class="share-row">
-          <button class="btn-share" id="btn-toggle-share">
+          <button class="btn-share" id="btn-toggle-share" title="Compartilhar tela">
             <span class="share-icon">🖥️</span>
-            <span id="share-btn-text">Compartilhar tela</span>
           </button>
           <button class="btn-settings" id="btn-settings" title="Configurações">
             <span class="settings-icon">⚙</span>
@@ -188,6 +187,9 @@
 
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
+
+  <!-- TOAST DE CIMA — só pra "alguém compartilhou a tela", borda verde -->
+  <div id="toast-top" class="toast toast-top hidden"></div>
 
   <!-- AUTOVISUALIZAÇÃO — sua própria tela, opcional (ver Configurações →
        Live), canto inferior direito. Nunca transmite som (só uma prévia
